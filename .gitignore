@@ -1,0 +1,16 @@
+# Godot-specific ignores
+.godot/
+*.uid
+
+# Export/import
+export.cfg
+export_presets.cfg
+
+# Mono/C# specific
+.mono/
+data_*/
+mono_crash.*.json
+
+# OS generated
+.DS_Store
+Thumbs.db
