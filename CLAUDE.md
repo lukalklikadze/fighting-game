@@ -1,5 +1,7 @@
 # 2D Online Fighting Game
 
+**This game MUST be multiplayer — exactly 2 players, connected to each other over the internet.** The game cannot be played solo or locally; both players join the same session remotely.
+
 A 2-player online fighting game built in Godot 4. Players connect over the internet and fight each other, with minigames embedded into the experience.
 
 ## Project Structure
