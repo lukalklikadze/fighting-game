@@ -1,18 +1,26 @@
 ; Engine configuration file.
 ; It's best edited using the editor UI and not directly,
-; but the file format is supported, so it's possible.
-
-; [section] ; comment
-; key=value
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
 
 config_version=5
+
+[animation]
+
+compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 [application]
 
 config/name="2D Fighting Game"
-config/features=PackedStringArray("4.3", "Forward Plus")
+run/main_scene="res://minigames/typeracer/scenes/Typeracer.tscn"
 config/tags=PackedStringArray("multiplayer", "fighting", "2d")
+config/features=PackedStringArray("4.6", "Forward Plus")
 
-[rendering]
+[display]
 
-renderer/rendering_method="forward_plus"
+window/size/mode=3
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
