@@ -31,6 +31,8 @@ var _balls: Dictionary = {}
 var _base_scale: Dictionary = {}
 var _selected := 0
 var _chosen := -1
+var _opp_chosen := -1
+var _starting := false
 var _selection_enabled := false
 
 var _code_edit: LineEdit
@@ -111,17 +113,50 @@ func _update_highlight() -> void:
 
 func _choose(index: int) -> void:
 	_chosen = index
-	_set_status("You picked %s." % BALL_ORDER[index])
+	_set_status("You picked %s — waiting for both to choose..." % BALL_ORDER[index])
 	# Tell the other player which fighter we picked.
 	if multiplayer.has_multiplayer_peer():
 		_rpc_set_opponent_choice.rpc(index)
+	_maybe_start()
 
 
 @rpc("any_peer", "call_remote", "reliable")
 func _rpc_set_opponent_choice(index: int) -> void:
 	index = clampi(index, 0, BALL_ORDER.size() - 1)
+	_opp_chosen = index
 	_opponent_display.texture = CHAR_TEXTURES[BALL_ORDER[index]]
 	_opponent_display.visible = true
+	_maybe_start()
+
+
+# Once BOTH players have picked, the host launches the fight, carrying both
+# choices + the live connection into the fight scene.
+func _maybe_start() -> void:
+	if _starting or not multiplayer.is_server():
+		return
+	if _chosen < 0 or _opp_chosen < 0:
+		return
+	_starting = true
+	_set_status("Starting fight...")
+	var host_key: String = BALL_ORDER[_chosen]       # host = Player 1
+	var client_key: String = BALL_ORDER[_opp_chosen] # client = Player 2
+	if multiplayer.has_multiplayer_peer():
+		_rpc_goto_fight.rpc(host_key, client_key, _client_peer_id)
+	_goto_fight(host_key, client_key, _client_peer_id)
+
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_goto_fight(p1_key: String, p2_key: String, cpid: int) -> void:
+	_goto_fight(p1_key, p2_key, cpid)
+
+
+func _goto_fight(p1_key: String, p2_key: String, cpid: int) -> void:
+	MatchSetup.active = true
+	MatchSetup.p1_choice = p1_key
+	MatchSetup.p2_choice = p2_key
+	MatchSetup.client_peer_id = cpid
+	# The ENet peer persists across the scene change.
+	get_tree().change_scene_to_file("res://scenes/WhiteWorldTest.tscn")
 
 
 func _send_choice_to(peer_id: int) -> void:

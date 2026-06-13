@@ -131,6 +131,11 @@ var _hosting_active := false
 var _connected_as_client := false
 var _rng := RandomNumberGenerator.new()
 
+# Fight-mode: launched directly from the starter_2 select scene (skip title/select).
+var _fight_mode := false
+var _fight_started := false
+var _fight_ready_timer := 0.0
+
 
 func _ready() -> void:
 	_rng.randomize()
@@ -143,12 +148,18 @@ func _ready() -> void:
 	_configure_players_for_selection()
 	_reset_match()
 	_set_match_enabled(false)
-	_show_title_screen()
+	if MatchSetup.active:
+		_enter_fight_mode()
+	else:
+		_show_title_screen()
 
 
 func _process(delta: float) -> void:
 	_process_lan_discovery(delta)
 	_process_join_timeout(delta)
+	if _fight_mode and not _fight_started:
+		_process_fight_handshake(delta)
+		return
 	match _screen:
 		ScreenState.TITLE:
 			_process_title(delta)
@@ -711,6 +722,13 @@ func _show_select_screen(message := "") -> void:
 	_refresh_select_ui()
 
 
+func _hide_title_and_select() -> void:
+	_title_root.visible = false
+	_select_root.visible = false
+	_fight_layer.visible = false
+	_set_match_enabled(false)
+
+
 func _show_match_screen() -> void:
 	_screen = ScreenState.MATCH
 	RenderingServer.set_default_clear_color(Color.WHITE)
@@ -912,6 +930,76 @@ func _apply_lobby_state(state: Dictionary) -> void:
 	_refresh_select_ui()
 
 
+# --- Fight-mode entry (launched from the starter_2 select scene) ---------------
+
+# Map a starter_2 ball key to our CHARACTERS index.
+# starter_2 uses "scottish" (two t's); our gameplay uses "scotish".
+func _ball_key_to_index(key: String) -> int:
+	match key:
+		"english":
+			return 0
+		"georgian":
+			return 1
+		"scottish", "scotish":
+			return 2
+		_:
+			return RANDOM_SLOT
+
+
+func _enter_fight_mode() -> void:
+	_fight_mode = true
+	_fight_started = false
+	_hide_title_and_select()
+	if multiplayer.is_server():
+		_hosting_active = true
+		_connected_as_client = false
+		_client_peer_id = int(MatchSetup.client_peer_id)
+		_set_status("Starting fight...")
+		# Host waits for the client to signal it's loaded (_rpc_fight_ready).
+	else:
+		_hosting_active = false
+		_connected_as_client = true
+		_client_peer_id = multiplayer.get_unique_id()
+		_fight_ready_timer = 0.0  # start pinging the host immediately
+
+
+func _process_fight_handshake(delta: float) -> void:
+	# Client repeatedly tells the host it's in the fight scene until the match
+	# actually starts (covers any scene-load ordering between the two peers).
+	if not _connected_as_client:
+		return
+	_fight_ready_timer -= delta
+	if _fight_ready_timer <= 0.0:
+		_fight_ready_timer = 0.3
+		if multiplayer.has_multiplayer_peer():
+			_rpc_fight_ready.rpc_id(1)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_fight_ready() -> void:
+	if not (multiplayer.is_server() and _fight_mode) or _fight_started:
+		return
+	_begin_fight_from_setup()
+
+
+func _begin_fight_from_setup() -> void:
+	if _fight_started:
+		return
+	_fight_started = true
+	_selected_by_player[1] = _ball_key_to_index(String(MatchSetup.p1_choice))
+	_selected_by_player[2] = _ball_key_to_index(String(MatchSetup.p2_choice))
+	var resolved := _resolve_match_characters()
+	var p1_character := int(resolved[0])
+	var p2_character := int(resolved[1])
+	_rpc_start_match.rpc(_client_peer_id, p1_character, p2_character)
+	_start_match(_client_peer_id, p1_character, p2_character)
+
+
+func _return_to_lobby_scene() -> void:
+	MatchSetup.clear()
+	get_tree().change_scene_to_file("res://starter_2.tscn")
+
+
 func _try_start_match_if_ready() -> void:
 	if not multiplayer.has_multiplayer_peer() or not multiplayer.is_server():
 		return
@@ -952,6 +1040,9 @@ func _start_match(client_peer_id: int, p1_character: int, p2_character: int) -> 
 	player_one.call("reset_super")
 	player_two.call("reset_super")
 	_connect_super_signals()
+	if _fight_mode:
+		_fight_started = true
+		MatchSetup.clear()
 	_show_match_screen()
 
 
@@ -1661,6 +1752,9 @@ func _on_peer_connected(peer_id: int) -> void:
 
 
 func _on_peer_disconnected(peer_id: int) -> void:
+	if _fight_mode:
+		_return_to_lobby_scene()
+		return
 	if multiplayer.is_server():
 		if peer_id == _client_peer_id:
 			_client_peer_id = 0
@@ -1695,6 +1789,9 @@ func _on_connection_failed() -> void:
 
 
 func _on_server_disconnected() -> void:
+	if _fight_mode:
+		_return_to_lobby_scene()
+		return
 	_close_multiplayer_peer()
 	_stop_host_discovery()
 	_stop_join_discovery()
