@@ -56,6 +56,7 @@ var _code_label: Label
 var _status_label: Label
 var _test_hint: Label
 var _menu_highlight: Panel
+var _menu_glow: ColorRect
 var _start_button: Button
 var _join_button: Button
 
@@ -277,6 +278,15 @@ func _build_ui() -> void:
 	_menu_highlight.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(_menu_highlight)
 
+	# Soft additive glow that brightens the baked START / JOIN word when focused.
+	_menu_glow = ColorRect.new()
+	_menu_glow.color = Color(1.0, 0.93, 0.62, 0.22)
+	var glow_mat := CanvasItemMaterial.new()
+	glow_mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	_menu_glow.material = glow_mat
+	_menu_glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(_menu_glow)
+
 	_code_label = _make_label("ENTER A CODE TO JOIN", 16, Color(0.88, 0.94, 1.0, 1.0))
 	_code_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_code_label.position = Vector2(440, 408)
@@ -336,6 +346,8 @@ func _apply_menu_visibility() -> void:
 	var hosting_wait := _menu == Menu.WAIT
 	if _menu_highlight != null:
 		_menu_highlight.visible = in_choices
+	if _menu_glow != null:
+		_menu_glow.visible = in_choices
 	if _test_hint != null:
 		_test_hint.visible = in_choices
 	if _code_label != null:
@@ -350,6 +362,10 @@ func _update_menu_highlight() -> void:
 	var r := START_RECT if _menu_index == 0 else JOIN_RECT
 	_menu_highlight.position = r.position - Vector2(12, 12)
 	_menu_highlight.size = r.size + Vector2(24, 24)
+	if _menu_glow != null:
+		# Hug the word a little tighter than the box so it reads as a lit button.
+		_menu_glow.position = r.position - Vector2(6, 6)
+		_menu_glow.size = r.size + Vector2(12, 12)
 
 
 func _field_style(focused: bool) -> StyleBoxFlat:
