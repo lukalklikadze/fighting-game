@@ -10,8 +10,8 @@ extends Node2D
 ##   1 / 2 / 3  English / Georgian / Scotsman      Q  cycle character
 ##   R  reset positions                            Esc  quit
 
-const P1_START := Vector2(-260, 232)
-const P2_START := Vector2(340, 232)
+const P1_START := Vector2(-150, 232)
+const P2_START := Vector2(170, 232)
 const CHARS := ["english", "georgian", "scotish"]
 const CHAR_NAMES := {"english": "ENGLISHMAN", "georgian": "GEORGIAN", "scotish": "SCOTSMAN"}
 

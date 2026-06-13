@@ -35,14 +35,22 @@ const PERSON_LEG_DIR := "res://assets/leg kick/"
 const PERSON_JUMP_DIR := "res://assets/jump/"
 const PERSON_HARD_DIR := "res://assets/hard hit/"
 # walk/hand/leg/hard = frame counts; jump = explicit (sparse) frame numbers;
-# fig_h/feet = drawn-figure height and feet offset below the 1000px canvas
-# center (from frame 0) used to scale + ground the art.
+# dash = a single hard-hit frame reused as the dash pose; fig_h/feet =
+# drawn-figure height and feet offset below the 1000px canvas center (from
+# frame 0) used to scale + ground the art.
 const PERSON_TARGET_HEIGHT := 340.0
 const PERSON_SETS := {
-	"english":  {"base": "english man",  "walk": 12, "hand": 6, "leg": 8,  "hard": 16, "jump": [0, 6, 9],  "fig_h": 905, "feet": 455},
-	"georgian": {"base": "georgian man", "walk": 12, "hand": 5, "leg": 10, "hard": 27, "jump": [4, 14],    "fig_h": 958, "feet": 466},
-	"scotish":  {"base": "scotish man",  "walk": 12, "hand": 6, "leg": 11, "hard": 14, "jump": [0, 6, 17],  "fig_h": 922, "feet": 449},
+	"english":  {"base": "english man",  "walk": 12, "hand": 6, "leg": 8,  "hard": 16, "jump": [0, 6, 9],  "dash": 4, "fig_h": 905, "feet": 455},
+	"georgian": {"base": "georgian man", "walk": 12, "hand": 5, "leg": 10, "hard": 27, "jump": [4, 14],    "dash": 9, "fig_h": 958, "feet": 466},
+	"scotish":  {"base": "scotish man",  "walk": 12, "hand": 6, "leg": 11, "hard": 14, "jump": [0, 6, 17],  "dash": 7, "fig_h": 922, "feet": 449},
 }
+
+# Hand-drawn attacks are timed FROM their art: each plays once across the whole
+# move at this readable fps, and the hit lands near the end of the swing (so the
+# strike connects when the drawn arm/leg is extended, not at the wind-up start).
+const PERSON_ATK_FPS := {"light": 26.0, "medium": 24.0, "heavy": 22.0, "air": 18.0}
+# Map each attack to the animation whose frame count drives its timing.
+const PERSON_ATK_ANIM := {"light": "hand", "medium": "leg", "heavy": "hard", "air": "leg"}
 
 const WALK_SPEED := 540.0
 const BACKWARD_SPEED := 380.0
@@ -480,36 +488,36 @@ func _build_placeholder_frames() -> void:
 	sprite.sprite_frames = frames
 
 
-# A hand-drawn person only has walk / hand kick / leg kick, so every animation
-# the state machine might play is mapped onto those: idle = first walk frame,
-# backward walk = walk reversed, hand kick = light (J), leg kick = medium (K)
-# and the air/heavy/combo fallbacks, hit/death = a still frame.
+# A hand-drawn person has walk / jump / hand kick / leg kick / hard hit. The
+# state machine's other animations are mapped onto those: idle = first walk
+# frame, backward walk = walk reversed, hand kick = light (J), leg kick =
+# medium (K) + air fallback, hard hit = heavy (L), dash = one hard-hit pose,
+# full_combo = leg, hit/death = a still frame. Attack timing is retuned to the
+# art afterwards (see _retune_person_attacks).
 func _build_person_frames(info: Dictionary) -> void:
 	var base := str(info["base"])
 	var walk_n := int(info["walk"])
 	var hand_n := int(info["hand"])
 	var leg_n := int(info["leg"])
+	var hard_n := int(info["hard"])
 	var frames := SpriteFrames.new()
 	frames.remove_animation("default")
 
-	var hard_n := int(info["hard"])
-	# Heavy ("hard hit") plays once across the heavy move's ~0.72s; jump plays
-	# its sparse pose frames over the takeoff, then holds on the way down.
-	var hard_speed := maxf(float(hard_n) / 0.72, 12.0)
-
 	_add_person_anim(frames, "walk", PERSON_WALK_DIR, base, 0, walk_n - 1, 14.0, true, false)
 	_add_person_anim(frames, "walk_back", PERSON_WALK_DIR, base, 0, walk_n - 1, 14.0, true, true)
-	_add_person_anim(frames, "arm_attack", PERSON_HAND_DIR, base, 0, hand_n - 1, 18.0, false, false)
-	_add_person_anim(frames, "leg_attack", PERSON_LEG_DIR, base, 0, leg_n - 1, 16.0, false, false)
-	_add_person_anim(frames, "heavy_attack", PERSON_HARD_DIR, base, 0, hard_n - 1, hard_speed, false, false)
+	_add_person_anim(frames, "arm_attack", PERSON_HAND_DIR, base, 0, hand_n - 1, float(PERSON_ATK_FPS["light"]), false, false)
+	_add_person_anim(frames, "leg_attack", PERSON_LEG_DIR, base, 0, leg_n - 1, float(PERSON_ATK_FPS["medium"]), false, false)
+	_add_person_anim(frames, "heavy_attack", PERSON_HARD_DIR, base, 0, hard_n - 1, float(PERSON_ATK_FPS["heavy"]), false, false)
+	_add_person_anim(frames, "air_attack", PERSON_LEG_DIR, base, 0, leg_n - 1, float(PERSON_ATK_FPS["air"]), false, false)
 	_add_person_anim_list(frames, "jump_start", PERSON_JUMP_DIR, base, info["jump"], 10.0, false, false)
+	_add_person_anim_list(frames, "dash", PERSON_HARD_DIR, base, [info["dash"]], 6.0, false, false)
 	_add_person_anim(frames, "idle", PERSON_WALK_DIR, base, 0, 0, 6.0, true, false)
-	for still in ["slide", "dash", "hit", "death"]:
+	for still in ["slide", "hit", "death"]:
 		_add_person_anim(frames, still, PERSON_WALK_DIR, base, 0, 0, 6.0, false, false)
-	for kick_alias in ["full_combo", "air_attack"]:
-		_add_person_anim(frames, kick_alias, PERSON_LEG_DIR, base, 0, leg_n - 1, 16.0, false, false)
+	_add_person_anim(frames, "full_combo", PERSON_LEG_DIR, base, 0, leg_n - 1, 16.0, false, false)
 
 	sprite.sprite_frames = frames
+	_retune_person_attacks(info)
 
 	# The hand-drawn art is 1000px tall; scale it to fighter size and drop the
 	# feet onto the same ground line the placeholder uses. (facing uses flip_h,
@@ -517,6 +525,40 @@ func _build_person_frames(info: Dictionary) -> void:
 	var s := PERSON_TARGET_HEIGHT / float(info["fig_h"])
 	sprite.scale = Vector2(s, s)
 	sprite.position = Vector2(0.0, 124.0 - float(info["feet"]) * s)
+
+
+# Time each normal to its drawn swing: the move lasts as long as the animation
+# (played once at PERSON_ATK_FPS) and the hit lands at ~78% through -- i.e. when
+# the limb is extended -- with a short active window and the follow-through
+# frames covering recovery. Also gives the air kick a roomy, slightly lower
+# hitbox so a jump-in reliably connects with a grounded opponent.
+func _retune_person_attacks(info: Dictionary) -> void:
+	for atk in PERSON_ATK_FPS.keys():
+		var n := int(info[str(PERSON_ATK_ANIM[atk])])
+		var fps := float(PERSON_ATK_FPS[atk])
+		var total := maxi(6, int(round(float(n) / fps * 60.0)))
+		var startup: int
+		var active: int
+		if atk == "air":
+			# Airtime is short, so the kick must come out fast and stay out --
+			# otherwise you land before it connects.
+			startup = maxi(3, int(round(float(total) * 0.25)))
+			active = maxi(4, int(round(float(total) * 0.5)))
+		else:
+			# Ground normals land at ~78% -- when the drawn limb is extended.
+			startup = maxi(2, int(round(float(total) * 0.78)))
+			active = maxi(2, int(round(float(total) * 0.12)))
+		var recovery := maxi(2, total - startup - active)
+		var def: Dictionary = _attack_defs[atk]
+		def["startup"] = startup
+		def["active"] = active
+		def["recovery"] = recovery
+	# A grounded foe's hurtbox spans y -144..0. The old air box sat high (around
+	# head height), so a jump-in over the foe whiffed; make it tall and reaching
+	# down past the feet so a descending kick connects across a wide height band.
+	var air: Dictionary = _attack_defs["air"]
+	air["hitbox_offset"] = Vector2(76.0, -50.0)
+	air["hitbox_size"] = Vector2(128.0, 174.0)
 
 
 func _add_person_anim(frames: SpriteFrames, anim: String, dir: String, base: String, first: int, last: int, speed: float, loops: bool, reverse: bool) -> void:
@@ -964,7 +1006,7 @@ func reset_special_cooldown() -> void:
 
 
 func _try_start_dash() -> bool:
-	if _is_simple() or bot_enabled or _dash_cooldown > 0.0 or not _is_forward_input(_move_dir):
+	if bot_enabled or _dash_cooldown > 0.0 or not _is_forward_input(_move_dir):
 		return false
 	var tapped_forward := (_right_pressed and facing_dir > 0) or (_left_pressed and facing_dir < 0)
 	if not tapped_forward:
