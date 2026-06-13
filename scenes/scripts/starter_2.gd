@@ -82,7 +82,12 @@ func _ready() -> void:
 	_build_ui()
 	_connect_multiplayer_signals()
 	_update_highlight()
-	_show_choices()
+	# Coming back from a finished match the connection is still live -> drop both
+	# players straight back onto this select screen instead of the START/JOIN menu.
+	if multiplayer.has_multiplayer_peer() and multiplayer.get_peers().size() > 0:
+		_resume_connected_lobby()
+	else:
+		_show_choices()
 
 
 func _process(delta: float) -> void:
@@ -126,11 +131,29 @@ func _select_input(event: InputEvent) -> void:
 	if _key_right(event):
 		_selected = (_selected + 1) % BALL_ORDER.size()
 		_update_highlight()
+		_broadcast_hover()
 	elif _key_left(event):
 		_selected = (_selected - 1 + BALL_ORDER.size()) % BALL_ORDER.size()
 		_update_highlight()
+		_broadcast_hover()
 	elif event.is_action_pressed("ui_accept"):
 		_choose(_selected)
+
+
+# Show the opponent your live cursor (not just your final pick), so each player
+# sees what the other is currently selecting.
+func _broadcast_hover() -> void:
+	if _test_mode:
+		return
+	if _hosting_active or _connected_as_client:
+		_rpc_set_opponent_hover.rpc(_selected)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_set_opponent_hover(index: int) -> void:
+	index = clampi(index, 0, BALL_ORDER.size() - 1)
+	_opponent_display.texture = CHAR_TEXTURES[BALL_ORDER[index]]
+	_opponent_display.visible = true
 
 
 func _activate_menu() -> void:
@@ -337,6 +360,28 @@ func _show_choices() -> void:
 	_set_status("")
 
 
+# Re-entered with a live connection (after a match) -> straight to selection.
+func _resume_connected_lobby() -> void:
+	if multiplayer.is_server():
+		_hosting_active = true
+		_connected_as_client = false
+		_client_peer_id = multiplayer.get_peers()[0]
+	else:
+		_connected_as_client = true
+		_hosting_active = false
+		_client_peer_id = multiplayer.get_unique_id()
+	_chosen = -1
+	_opp_chosen = -1
+	_starting = false
+	_selected = 0
+	_menu = Menu.SELECT
+	_apply_menu_visibility()
+	_opponent_display.visible = false
+	_set_selection_enabled(true)
+	_set_status("Both players in — pick your fighter!")
+	_broadcast_hover()
+
+
 func _apply_menu_visibility() -> void:
 	var in_choices := _menu == Menu.CHOICES
 	var entering_code := _menu == Menu.CODE_ENTRY
@@ -504,6 +549,7 @@ func _on_peer_connected(peer_id: int) -> void:
 		_set_status("Both players in — pick your fighter!")
 		_set_selection_enabled(true)
 		_send_choice_to(peer_id)
+		_broadcast_hover()
 
 
 func _on_peer_disconnected(peer_id: int) -> void:
@@ -528,6 +574,7 @@ func _on_connected_to_server() -> void:
 	_refresh_lobby_controls()
 	_set_selection_enabled(true)
 	_send_choice_to(1)
+	_broadcast_hover()
 
 
 func _on_connection_failed() -> void:

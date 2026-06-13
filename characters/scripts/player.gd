@@ -94,8 +94,8 @@ const FULL_COMBO_INPUT_WINDOW := 0.85
 # proportional to the damage you deal AND the damage you take, with the
 # defender gaining a little more so a losing player can fight back to a super
 # (a comeback mechanic, as in Street Fighter / KOF).
-const SUPER_METER_PER_DMG_DEALT := 1.0    # meter per point of damage dealt
-const SUPER_METER_PER_DMG_TAKEN := 1.4    # meter per point of damage taken
+const SUPER_METER_PER_DMG_DEALT := 0.45   # meter per point of damage dealt
+const SUPER_METER_PER_DMG_TAKEN := 0.60   # meter per point of damage taken
 
 # ── Special move ──────────────────────────────────────────────────────────────
 # Every fighter has one signature special (see characters/scripts/specials/).

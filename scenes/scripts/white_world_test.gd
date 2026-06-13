@@ -102,6 +102,7 @@ var _mg_layer: CanvasLayer
 var _fade_rect: ColorRect
 var _p1_super_bar: ProgressBar
 var _p2_super_bar: ProgressBar
+var _super_ready_label: Label
 var _p1_pips: Array = []
 var _p2_pips: Array = []
 var _card_panels: Array[PanelContainer] = []
@@ -171,6 +172,7 @@ func _process(delta: float) -> void:
 			_refresh_lives_super_hud()
 			if _msub == MatchSub.FIGHT:
 				_process_match_end()
+				_process_super_activation()
 			_handle_debug_reset()
 
 
@@ -248,6 +250,22 @@ func _build_lives_super_hud(layer: CanvasLayer) -> void:
 		pip.custom_minimum_size = Vector2(22, 12)
 		p2_box.add_child(pip)
 		_p2_pips.append(pip)
+
+	# "Super ready -> press ENTER" prompt, shown above the bar when YOUR meter is full.
+	_super_ready_label = Label.new()
+	_super_ready_label.text = "SUPER READY!  PRESS  ENTER"
+	_super_ready_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_super_ready_label.anchor_left = 0.0
+	_super_ready_label.anchor_right = 1.0
+	_super_ready_label.offset_top = 78.0
+	_super_ready_label.offset_bottom = 104.0
+	_super_ready_label.add_theme_font_override("font", MENU_FONT)
+	_super_ready_label.add_theme_font_size_override("font_size", 22)
+	_super_ready_label.add_theme_color_override("font_color", Color(1.0, 0.86, 0.28, 1.0))
+	_super_ready_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	_super_ready_label.add_theme_constant_override("outline_size", 5)
+	_super_ready_label.visible = false
+	layer.add_child(_super_ready_label)
 
 
 func _make_super_bar() -> ProgressBar:
@@ -1047,20 +1065,33 @@ func _start_match(client_peer_id: int, p1_character: int, p2_character: int) -> 
 
 
 func _connect_super_signals() -> void:
-	if _super_connected:
-		return
+	# The meter no longer auto-fires when full -- the player presses ENTER to
+	# unleash the super (see _process_super_activation). Nothing to connect.
 	_super_connected = true
-	player_one.connect("super_full", _on_super_full)
-	player_two.connect("super_full", _on_super_full)
 
 
 func _refresh_lives_super_hud() -> void:
+	var p1_full := false
+	var p2_full := false
 	if _p1_super_bar != null:
 		_p1_super_bar.max_value = float(player_one.get("super_max"))
 		_p1_super_bar.value = float(player_one.get("super_meter"))
+		p1_full = _p1_super_bar.value >= _p1_super_bar.max_value
 	if _p2_super_bar != null:
 		_p2_super_bar.max_value = float(player_two.get("super_max"))
 		_p2_super_bar.value = float(player_two.get("super_meter"))
+		p2_full = _p2_super_bar.value >= _p2_super_bar.max_value
+	# A full meter pulses gold; only the LOCAL player gets the "press ENTER" prompt.
+	var pulse := 0.55 + 0.45 * sin(Time.get_ticks_msec() / 110.0)
+	var bright := Color(1.0, 1.0, 1.0).lerp(Color(1.6, 1.5, 0.7), pulse)
+	if _p1_super_bar != null:
+		_p1_super_bar.modulate = bright if p1_full else Color.WHITE
+	if _p2_super_bar != null:
+		_p2_super_bar.modulate = bright if p2_full else Color.WHITE
+	var local_full := p2_full if _connected_as_client else p1_full
+	if _super_ready_label != null:
+		_super_ready_label.visible = local_full and _msub == MatchSub.FIGHT
+		_super_ready_label.modulate = Color(1.0, 1.0, 1.0, 0.55 + 0.45 * sin(Time.get_ticks_msec() / 140.0))
 	_refresh_pips(_p1_pips, 1, P1_COLOR)
 	_refresh_pips(_p2_pips, 2, P2_COLOR)
 
@@ -1135,6 +1166,11 @@ func _apply_character_to_player(player: Node2D, character_index: int) -> void:
 
 
 func _return_to_selection_after_match(message: String) -> void:
+	# Launched from the starter_2 lobby -> go back to that same select screen
+	# (the live connection persists), not this scene's old internal grid.
+	if _fight_mode:
+		_return_to_lobby_scene()
+		return
 	_locked_by_player[1] = false
 	_locked_by_player[2] = false
 	_selected_by_player[1] = -1
@@ -1229,6 +1265,17 @@ func _resume_round(b1: int, b2: int) -> void:
 #  Super meter -> networked minigame
 # ===========================================================================
 
+# A full meter waits for the local player to press ENTER, then fires the super.
+func _process_super_activation() -> void:
+	if not Input.is_action_just_pressed("ui_accept"):
+		return
+	var local_is_p2 := _connected_as_client
+	var lp: Node2D = player_two if local_is_p2 else player_one
+	if float(lp.get("super_meter")) < float(lp.get("super_max")):
+		return
+	_on_super_full(2 if local_is_p2 else 1)
+
+
 func _on_super_full(pid: int) -> void:
 	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
 		_rpc_request_super.rpc_id(1, pid)
@@ -1279,6 +1326,10 @@ func _run_super(which: int, attacker: int) -> void:
 	await _super_fade(0.0)
 	if _msub == MatchSub.SUPER:
 		_msub = MatchSub.FIGHT
+		# Reset both fighters to their starting spots, keeping current HP.
+		player_one.call("reset_fighter", PLAYER_ONE_START, false)
+		player_two.call("reset_fighter", PLAYER_TWO_START, false)
+		_refresh_health_hud()
 		_set_match_frozen(false)
 
 
