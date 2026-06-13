@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://juggling_scene_01"]
+
+[ext_resource type="Script" path="res://minigames/juggling/scripts/juggling.gd" id="1_jug"]
+
+[node name="Juggling" type="Node2D"]
+script = ExtResource("1_jug")
