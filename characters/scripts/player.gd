@@ -158,6 +158,10 @@ var _attack_landed := false
 var _attack_blocked := false
 var _hit_targets := {}
 var _combo_input_buffer: Array[Dictionary] = []
+# Combo input buffering: a chain follow-up pressed mid-attack is remembered and
+# fires the instant the cancel window opens (the hit lands), so MK-style strings
+# flow even if you mash the next button a little early.
+var _buffered_followup := ""
 
 var _special_ability: SpecialAbility = null
 var _special_cooldown := 0.0
@@ -559,9 +563,24 @@ func _retune_person_attacks(info: Dictionary) -> void:
 		def["startup"] = startup
 		def["active"] = active
 		def["recovery"] = recovery
+		# Cancel as soon as the active window opens (combined with the "must have
+		# landed" rule, this means you may chain the instant the hit connects).
+		def["cancel_frame"] = startup
 		# Play the whole drawn swing once across the move so it stays readable.
 		if sprite != null and sprite.sprite_frames != null:
 			sprite.sprite_frames.set_animation_speed(str(def["animation"]), float(n) / dur)
+	# Two clean MK-style strings, no jab-infinite:
+	#   J -> K -> L  (hand -> leg -> hard hit)   and   J -> L / K -> L.
+	_attack_defs["light"]["chains"] = ["medium", "heavy"]
+	_attack_defs["medium"]["chains"] = ["heavy"]
+	_attack_defs["heavy"]["chains"] = []
+	# Combo links barely push (so the foe stays in range + hitstun for the next
+	# hit); only the heavy finisher launches. Enough hitstun to link cleanly.
+	_attack_defs["light"]["hit_knockback"] = 70.0
+	_attack_defs["light"]["hitstun"] = 18
+	_attack_defs["medium"]["hit_knockback"] = 120.0
+	_attack_defs["medium"]["hitstun"] = 22
+	_attack_defs["heavy"]["hit_knockback"] = 720.0
 	# A grounded foe's hurtbox spans y -144..0. Tall, downward-reaching air box
 	# so a descending kick connects across a wide height band.
 	var air: Dictionary = _attack_defs["air"]
@@ -717,6 +736,15 @@ func _process_attack(delta: float) -> void:
 		velocity.x = float(_move_dir) * AIR_SPEED * scale
 
 	_try_queue_attack()
+	# A queued follow-up means the move already landed and is cancelable, so chain
+	# into it NOW -- cancel the recovery. This is what makes a combo string flow
+	# (the next hit comes out while the opponent is still in hitstun).
+	if _queued_attack != "" and _state_frame < _attack_total_frames(data):
+		var chained := _queued_attack
+		_queued_attack = ""
+		_start_attack(chained)
+		return
+
 	_update_attack_hitbox_for_frame()
 
 	if _state_frame >= _attack_total_frames(data):
@@ -788,17 +816,25 @@ func _try_start_attack_from_input() -> bool:
 
 
 func _try_queue_attack() -> void:
-	if _attack_requests.is_empty():
-		return
-	var requested := _attack_requests[0]
-	if requested == "full_combo":
-		if _active_attack == "light" or _active_attack == "medium":
-			_start_full_combo_continuation(_active_attack, _state_frame)
-		return
-	if _queued_attack != "":
-		return
-	if _can_cancel_into(requested):
-		_queued_attack = requested
+	# Remember a chainable follow-up even if pressed before the cancel window.
+	if not _attack_requests.is_empty():
+		var requested := _attack_requests[0]
+		if requested == "full_combo":
+			if _active_attack == "light" or _active_attack == "medium":
+				_start_full_combo_continuation(_active_attack, _state_frame)
+			return
+		if _is_chain_target(requested):
+			_buffered_followup = requested
+	# Fire the buffered follow-up the moment the move is cancelable (hit landed).
+	if _queued_attack == "" and _buffered_followup != "" and _can_cancel_into(_buffered_followup):
+		_queued_attack = _buffered_followup
+		_buffered_followup = ""
+
+
+func _is_chain_target(attack_name: String) -> bool:
+	if _active_attack == "" or not _attack_defs.has(_active_attack):
+		return false
+	return (_attack_defs[_active_attack]["chains"] as Array).has(attack_name)
 
 
 func _can_cancel_into(attack_name: String) -> bool:
@@ -820,6 +856,7 @@ func _start_attack(attack_name: String) -> void:
 		return
 	_active_attack = attack_name
 	_queued_attack = ""
+	_buffered_followup = ""
 	_attack_landed = false
 	_attack_blocked = false
 	_hit_targets.clear()
@@ -859,6 +896,7 @@ func _finish_attack() -> void:
 	_set_attack_hitbox_active(false)
 	_active_attack = ""
 	_queued_attack = ""
+	_buffered_followup = ""
 	_hit_targets.clear()
 	if is_on_floor():
 		_enter_state(FighterState.IDLE)
@@ -1652,7 +1690,9 @@ func _read_local_inputs() -> void:
 			_special_tap_count = 0
 			_last_attack_press[SPECIAL_TAP_KEY] = -10.0
 
-	if (light_pressed and medium_pressed and heavy_pressed) or _consume_full_combo_sequence():
+	# Hand-drawn fighters use real chained animations (J->K->L) instead of the
+	# placeholder full_combo, so skip the auto-combo for them.
+	if not simple and ((light_pressed and medium_pressed and heavy_pressed) or _consume_full_combo_sequence()):
 		_attack_requests.append("full_combo")
 		_combo_input_buffer.clear()
 		return

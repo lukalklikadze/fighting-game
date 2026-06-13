@@ -131,6 +131,12 @@ func _build_hud() -> void:
 	controls.text = "A/D move    W jump    J hand kick    K leg kick    L hard hit    L L L super    I block    R reset    Esc quit"
 	layer.add_child(controls)
 
+	var combos := _make_label(20, Color(0.55, 0.12, 0.10, 1.0))
+	combos.position = Vector2(40, 100)
+	combos.size = Vector2(1400, 30)
+	combos.text = "Combos (link as hits land):   J - K - L    |    J - L    |    K - L"
+	layer.add_child(combos)
+
 
 func _make_label(size: int, color: Color) -> Label:
 	var label := Label.new()
