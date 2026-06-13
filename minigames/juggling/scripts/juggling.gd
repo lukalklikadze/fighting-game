@@ -68,10 +68,8 @@ var am_host   := false
 var solo      := false
 
 # ─── UI ───────────────────────────────────────────────────────────────────────
-var _menu : Control
-var _ip   : LineEdit
-var _msg  : Label
-var _font : Font
+var _font           : Font
+var _countdown_text := ""   # drawn over the pitch before game_on
 
 # ─────────────────────────────────────────────────────────────────────────────
 func _ready() -> void:
@@ -80,111 +78,22 @@ func _ready() -> void:
 	get_window().content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MAXIMIZED)
 	_font = ThemeDB.fallback_font
-	_build_menu()
-
-# ══════════════════════════════════ MENU ══════════════════════════════════════
-func _build_menu() -> void:
-	_menu = Control.new()
-	_menu.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(_menu)
-
-	var bg := ColorRect.new()
-	bg.color = Color(0.04, 0.18, 0.04)
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_menu.add_child(bg)
-
-	var vb := VBoxContainer.new()
-	vb.custom_minimum_size = Vector2(380, 0)
-	vb.position = Vector2(SW / 2.0 - 190, SH / 2.0 - 160)
-	vb.add_theme_constant_override("separation", 10)
-	_menu.add_child(vb)
-
-	var title := Label.new()
-	title.text = "JUGGLING BATTLE"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 28)
-	vb.add_child(title)
-
-	var sub := Label.new()
-	sub.text = "Keep the ball in the air — don't let it touch the ground!"
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vb.add_child(sub)
-
-	_gap(vb, 12)
-
-	var hbtn := Button.new()
-	hbtn.text = "HOST  (you = left side)"
-	hbtn.pressed.connect(_do_host)
-	vb.add_child(hbtn)
-
-	_gap(vb, 4)
-
-	var lbl := Label.new()
-	lbl.text = "— or join with host's LAN IP —"
-	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(lbl)
-
-	_ip = LineEdit.new()
-	_ip.placeholder_text = "192.168.x.x"
-	_ip.text = "127.0.0.1"
-	vb.add_child(_ip)
-
-	var jbtn := Button.new()
-	jbtn.text = "JOIN  (you = left side)"
-	jbtn.pressed.connect(_do_join)
-	vb.add_child(jbtn)
-
-	_gap(vb, 6)
-
-	var sbtn := Button.new()
-	sbtn.text = "SOLO TEST"
-	sbtn.pressed.connect(_do_solo)
-	vb.add_child(sbtn)
-
-	_gap(vb, 8)
-
-	_msg = Label.new()
-	_msg.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_msg.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vb.add_child(_msg)
-
-func _gap(p: Control, h: int) -> void:
-	var s := Control.new(); s.custom_minimum_size = Vector2(0, h); p.add_child(s)
-
-# ══════════════════════════════════ NETWORK ═══════════════════════════════════
-func _do_host() -> void:
+	solo    = true
 	am_host = true
-	var enet := ENetMultiplayerPeer.new()
-	if enet.create_server(PORT, 1) != OK:
-		_msg.text = "Cannot open port %d." % PORT; return
-	multiplayer.multiplayer_peer = enet
-	multiplayer.peer_connected.connect(func(_id: int) -> void: _start(true))
-	_msg.text = "Hosting on port %d…\nWaiting for opponent." % PORT
+	my_ball = Vector2(HALF_W / 2.0, GROUND_Y - 160.0)
+	my_bvel = Vector2(randf_range(-80.0, 80.0), -380.0)
+	_run_countdown()
 
-func _do_join() -> void:
-	am_host = false
-	var ip := _ip.text.strip_edges()
-	var enet := ENetMultiplayerPeer.new()
-	if enet.create_client(ip, PORT) != OK:
-		_msg.text = "Could not connect."; return
-	multiplayer.multiplayer_peer = enet
-	multiplayer.connected_to_server.connect(func() -> void: _start(true))
-	multiplayer.connection_failed.connect(func() -> void: _msg.text = "Connection failed.")
-	_msg.text = "Connecting to %s…" % ip
-
-func _do_solo() -> void:
-	solo = true; am_host = true
-	_start(false)
-
-func _start(has_opponent: bool) -> void:
+func _run_countdown() -> void:
+	for n in [3, 2, 1]:
+		_countdown_text = str(n)
+		queue_redraw()
+		await get_tree().create_timer(1.0).timeout
+	_countdown_text = "GO!"
+	queue_redraw()
+	await get_tree().create_timer(0.6).timeout
+	_countdown_text = ""
 	game_on = true
-	op_alive = has_opponent
-	my_ball  = Vector2(HALF_W / 2.0, GROUND_Y - 160.0)
-	my_bvel  = Vector2(randf_range(-80.0, 80.0), -380.0)
-	if has_opponent:
-		op_ball = Vector2(HALF_W / 2.0, 180.0)
-	if is_instance_valid(_menu): _menu.queue_free(); _menu = null
 
 # ══════════════════════════════════ GAME LOOP ══════════════════════════════════
 func _process(delta: float) -> void:
@@ -262,31 +171,97 @@ func _net_lost() -> void:
 
 # ══════════════════════════════════ DRAW ══════════════════════════════════════
 func _draw() -> void:
-	if not game_on: return
 	_draw_pitch()
-	_draw_half(0.0,      my_x, my_lean, my_ball, my_kick, my_alive, true)
-	_draw_half(HALF_W,   op_x, op_lean, op_ball, op_kick, op_alive, false)
-	# Vertical divider — the centre line
-	draw_line(Vector2(HALF_W, 0), Vector2(HALF_W, SH), Color.WHITE, 3.0)
-	draw_circle(Vector2(HALF_W, SH / 2.0), 9.0, Color.WHITE)
-	if winner != "": _draw_banner()
+	_draw_half(0.0,    my_x, my_lean, my_ball, my_kick, my_alive, true)
+	_draw_half(HALF_W, op_x, op_lean, op_ball, op_kick, op_alive, false)
+	if _countdown_text != "":
+		_lbl(Vector2(SW / 2.0, SH / 2.0), _countdown_text, Color.WHITE, 96)
+	elif winner != "":
+		_draw_banner()
 
-# ── Football pitch background ─────────────────────────────────────────────────
+# ── Night stadium pitch (same style as typeracer) ────────────────────────────
 func _draw_pitch() -> void:
-	# Alternating green stripes across full width
-	var sw := float(SW) / 10.0
-	for i in range(10):
-		var c := Color(0.10, 0.40, 0.10) if i % 2 == 0 else Color(0.12, 0.46, 0.12)
-		draw_rect(Rect2(i * sw, 0, sw, GROUND_Y), c)
-	# Grass strip at bottom
-	draw_rect(Rect2(0, GROUND_Y, SW, GRASS_H), Color(0.08, 0.30, 0.08))
+	var t := Time.get_ticks_msec() * 0.001
+	var crowd := 68.0   # stand height top and bottom
+
+	# Stadium base
+	draw_rect(Rect2(0, 0, SW, SH), Color("#070b1f"))
+	draw_rect(Rect2(0, 0, SW, SH * 0.5), Color(0.10, 0.14, 0.31, 0.22))
+
+	# Stands
+	draw_rect(Rect2(0, 0, SW, crowd), Color("#0b1230"))
+	draw_rect(Rect2(0, SH - crowd, SW, crowd), Color("#0b1230"))
+	_draw_crowd_dots(0.0, crowd)
+	_draw_crowd_dots(SH - crowd, crowd)
+	draw_rect(Rect2(0, crowd - 6, SW, 6), Color("#11183a"))
+	draw_rect(Rect2(0, SH - crowd, SW, 6), Color("#11183a"))
+
+	# Mown grass stripes
+	var stripe_w := float(SW) / 16.0
+	var py := crowd
+	var ph := SH - 2.0 * crowd
+	var sx := 0.0
+	var si := 0
+	while sx < SW:
+		var sc := Color("#2e8f4e") if si % 2 == 0 else Color("#2a833f")
+		draw_rect(Rect2(sx, py, minf(stripe_w, SW - sx), ph), sc)
+		sx += stripe_w
+		si += 1
+
 	# Ground line
-	draw_line(Vector2(0, GROUND_Y), Vector2(SW, GROUND_Y), Color(1, 1, 1, 0.5), 2.0)
-	# Goal areas at base of each half
-	var gw := 130.0;  var gh := 40.0
-	for ox in [0.0, float(HALF_W)]:
-		draw_rect(Rect2(ox + HALF_W / 2.0 - gw / 2.0, GROUND_Y, gw, gh),
-				  Color(1, 1, 1, 0.25), false)
+	draw_line(Vector2(0, GROUND_Y), Vector2(SW, GROUND_Y), Color(1, 1, 1, 0.45), 2.0)
+
+	# Centre divider — pulsing glow like typeracer
+	var pulse := 0.55 + 0.45 * sin(t * 1.6)
+	var dy := py + ph * 0.03
+	var dh := ph * 0.94
+	draw_rect(Rect2(HALF_W - 7, dy, 14, dh), Color(0.6, 0.72, 1.0, 0.12 * pulse))
+	draw_rect(Rect2(HALF_W - 3, dy, 6,  dh), Color(0.8, 0.86, 1.0, 0.30 * pulse))
+	draw_rect(Rect2(HALF_W - 1.5, dy, 3, dh), Color(1, 1, 1, 0.92))
+	draw_circle(Vector2(HALF_W, SH / 2.0), 9.0, Color.WHITE)
+
+	# Floodlights
+	for fx: float in [0.09, 0.5, 0.91]:
+		_draw_floodlight(SW * fx, t, true)
+		_draw_floodlight(SW * fx, t, false)
+
+	# Edge vignette
+	var vig := Color(0.016, 0.027, 0.07, 0.45)
+	draw_rect(Rect2(0, 0, SW, 4), vig)
+	draw_rect(Rect2(0, SH - 4, SW, 4), vig)
+	draw_rect(Rect2(0, 0, 4, SH), vig)
+	draw_rect(Rect2(SW - 4, 0, 4, SH), vig)
+
+
+func _draw_crowd_dots(top: float, band_h: float) -> void:
+	var step := 18.0
+	var y := top + 5.0
+	while y < top + band_h - 3.0:
+		var x := 5.0
+		while x < SW:
+			draw_circle(Vector2(x, y), 1.0, Color(0.84, 0.88, 1.0, 0.5))
+			x += step
+		y += step
+
+
+func _draw_floodlight(x: float, t: float, top: bool) -> void:
+	var bank_w := 34.0
+	var bank_h := 15.0
+	var pole_h := 38.0
+	var bank_y := 8.0 if top else SH - 8.0 - bank_h
+	var pole_y := bank_y + bank_h if top else bank_y - pole_h
+	var center := Vector2(x, bank_y + bank_h * 0.5)
+	var glow   := 0.85 + 0.15 * sin(t * 1.1)
+	for k in range(4):
+		draw_circle(center, 62.0 * glow * (1.0 - float(k) / 4.0 * 0.55),
+				Color(1.0, 0.97, 0.88, 0.10))
+	draw_rect(Rect2(x - 2.0, pole_y, 4.0, pole_h), Color("#283154"))
+	draw_rect(Rect2(x - bank_w * 0.5, bank_y, bank_w, bank_h), Color("#0c1228"))
+	var face := Rect2(x - bank_w * 0.5 + 2.0, bank_y + 2.0, bank_w - 4.0, bank_h - 4.0)
+	draw_rect(face, Color(1.0, 0.97, 0.85, 0.95 * glow))
+	for k in range(1, 4):
+		var lx := face.position.x + face.size.x * float(k) / 4.0
+		draw_rect(Rect2(lx, face.position.y, 1.0, face.size.y), Color("#0c1228"))
 
 # ── One player's half ─────────────────────────────────────────────────────────
 func _draw_half(ox: float, fig_x: float, lean: float, ball: Vector2,
@@ -466,11 +441,33 @@ func _draw_ball(pos: Vector2, _col: Color) -> void:
 
 # ── HUD ───────────────────────────────────────────────────────────────────────
 func _draw_banner() -> void:
-	var win := winner == "you"
-	var text := "YOU WIN!" if win else "YOU LOSE…"
-	var col  := Color(0.25, 1.0, 0.3) if win else Color(1.0, 0.3, 0.25)
-	draw_rect(Rect2(SW / 2.0 - 220, SH / 2.0 - 44, 440, 88), Color(0, 0, 0, 0.82))
-	_lbl(Vector2(SW / 2.0, SH / 2.0 + 10.0), text, col, 42)
+	var you_win  := winner == "you"
+	var you_text := "WINNER" if you_win else "LOSER"
+	var opp_text := "LOSER"  if you_win else "WINNER"
+	var you_col  := Color("#3ddc84") if you_win else Color("#ff5555")
+	var opp_col  := Color("#ff5555") if you_win else Color("#3ddc84")
+	var fs  := 80
+	var bw  := 370.0
+	var bh  := 104.0
+	var lc  := Vector2(float(HALF_W) * 0.5, float(SH) * 0.5)
+	var rc  := Vector2(float(HALF_W) * 1.5, float(SH) * 0.5)
+	draw_rect(Rect2(lc.x - bw * 0.5, lc.y - bh * 0.5, bw, bh), Color(0, 0, 0, 0.75))
+	_lbl_outlined(lc, you_text, you_col, fs)
+	draw_rect(Rect2(rc.x - bw * 0.5, rc.y - bh * 0.5, bw, bh), Color(0, 0, 0, 0.75))
+	_lbl_outlined(rc, opp_text, opp_col, fs)
+
+
+func _lbl_outlined(centre: Vector2, text: String, col: Color, fs: int) -> void:
+	var sz  := _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
+	var pos := centre + Vector2(-sz.x * 0.5, sz.y * 0.35)
+	var dark := Color(0.0, 0.0, 0.0, 0.85)
+	for dx: int in [-2, 0, 2]:
+		for dy: int in [-2, 0, 2]:
+			if dx == 0 and dy == 0: continue
+			draw_string(_font, pos + Vector2(float(dx), float(dy)), text,
+					HORIZONTAL_ALIGNMENT_LEFT, -1, fs, dark)
+	draw_string(_font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+
 
 func _lbl(centre: Vector2, text: String, col: Color, fs: int) -> void:
 	var sz := _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
