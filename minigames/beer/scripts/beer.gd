@@ -39,6 +39,11 @@ var opp_stopped := false
 var solo := false
 var bot_target := 0.9    # the fill the bot tries to stop at
 
+# --- Embedded mode (launched as a "super" by the fight controller) ----------
+signal minigame_finished(result: int)  # 1 = local won, 0 = local lost, -1 = draw
+var embedded := false
+var _result_emitted := false
+
 # Host-side bookkeeping for deciding the winner.
 var _finals := {}
 
@@ -85,8 +90,22 @@ func _ready() -> void:
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 
-	# No menu — drop straight into a match (solo vs a bot).
+	# No menu — drop straight into a match (unless the fight controller drives us).
+	if not embedded:
+		_on_solo_pressed()
+
+
+# Public entry point used by the fight controller for an embedded super.
+func begin_solo() -> void:
 	_on_solo_pressed()
+
+
+func _emit_embedded_result(result: int) -> void:
+	if _result_emitted:
+		return
+	_result_emitted = true
+	await get_tree().create_timer(1.1).timeout  # let WINNER/LOSER show briefly
+	minigame_finished.emit(result)
 
 
 # ===========================================================================
@@ -290,7 +309,9 @@ func _show_outcome(you_text: String, opp_text: String) -> void:
 	result_label.visible = false
 	_set_panel_result(you_result, you_text)
 	_set_panel_result(opp_result, opp_text)
-	if you_text == "DRAW":
+	if embedded:
+		_emit_embedded_result(1 if you_text == "WINNER" else (-1 if you_text == "DRAW" else 0))
+	elif you_text == "DRAW":
 		_restart_on_draw()
 
 

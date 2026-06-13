@@ -47,6 +47,11 @@ var solo := false           # playing alone vs a bot (no networking)
 const BOT_SPEED := 3.5       # bot typing speed in characters per second
 var bot_progress := 0.0      # fractional char count the bot has "typed"
 
+# --- Embedded mode (launched as a "super" by the fight controller) ----------
+signal minigame_finished(result: int)  # 1 = local won, 0 = local lost, -1 = draw
+var embedded := false
+var _result_emitted := false
+
 # --- Multiplayer draw detection ---------------------------------------------
 var _finishers: Array[int] = []  # peer IDs that have reported finished (host only)
 
@@ -96,8 +101,22 @@ func _ready() -> void:
 	_build_game_ui()
 	result_label.visible = false
 
-	# No menu — drop straight into a match.
+	# No menu — drop straight into a match (unless the fight controller drives us).
+	if not embedded:
+		_on_solo_pressed()
+
+
+# Public entry point used by the fight controller for an embedded super.
+func begin_solo() -> void:
 	_on_solo_pressed()
+
+
+func _emit_embedded_result(result: int) -> void:
+	if _result_emitted:
+		return
+	_result_emitted = true
+	await get_tree().create_timer(1.1).timeout  # let WINNER/LOSER show briefly
+	minigame_finished.emit(result)
 
 
 # ===========================================================================
@@ -221,6 +240,8 @@ func _show_result(won: bool) -> void:
 	opp_progress.text = ""
 	_set_panel_result(you_result, won)
 	_set_panel_result(opp_result, not won)
+	if embedded:
+		_emit_embedded_result(1 if won else 0)
 
 
 func _show_draw() -> void:
@@ -234,7 +255,10 @@ func _show_draw() -> void:
 		lbl.text = "DRAW"
 		lbl.add_theme_color_override("font_color", Color("#ffd166"))
 		lbl.get_parent().visible = true
-	_restart_on_draw()
+	if embedded:
+		_emit_embedded_result(-1)
+	else:
+		_restart_on_draw()
 
 
 func _restart_on_draw() -> void:

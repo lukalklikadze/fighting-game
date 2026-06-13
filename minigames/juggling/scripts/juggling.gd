@@ -71,16 +71,24 @@ var game_on   := false
 var am_host   := false
 var solo      := false
 
+# Embedded mode (launched as a "super" by the fight controller)
+signal minigame_finished(result: int)  # 1 = local won, 0 = local lost, -1 = draw
+const EMBED_WIN_KICKS := 6   # reach this many clean kicks to "win" the embedded super
+var embedded := false
+var _result_emitted := false
+
 # ─── UI ───────────────────────────────────────────────────────────────────────
 var _font           : Font
 var _countdown_text := ""   # drawn over the pitch before game_on
 
 # ─────────────────────────────────────────────────────────────────────────────
 func _ready() -> void:
-	get_window().content_scale_size   = Vector2i(SW, SH)
-	get_window().content_scale_mode   = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
-	get_window().content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
-	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MAXIMIZED)
+	# Skip the global window resize when embedded — we render as an overlay.
+	if not embedded:
+		get_window().content_scale_size   = Vector2i(SW, SH)
+		get_window().content_scale_mode   = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
+		get_window().content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MAXIMIZED)
 	var base_font := SystemFont.new()
 	base_font.font_names = PackedStringArray([
 		"Marker Felt", "Chalkboard SE", "Noteworthy", "Bradley Hand",
@@ -90,11 +98,28 @@ func _ready() -> void:
 	chubby.base_font = base_font
 	chubby.variation_embolden = 0.6
 	_font = chubby
+	if not embedded:
+		begin_solo()
+
+
+# Public entry point used by the fight controller for an embedded super.
+func begin_solo() -> void:
 	solo    = true
 	am_host = true
+	winner  = ""
+	my_alive = true
+	my_kick_count = 0
 	my_ball = Vector2(HALF_W / 2.0, SH / 2.0)
 	my_bvel = Vector2(randf_range(-80.0, 80.0), -380.0)
 	_run_countdown()
+
+
+func _emit_embedded_result(result: int) -> void:
+	if _result_emitted:
+		return
+	_result_emitted = true
+	await get_tree().create_timer(1.1).timeout  # let the WINNER/LOSER banner show
+	minigame_finished.emit(result)
 
 func _run_countdown() -> void:
 	for n in [3, 2, 1]:
@@ -110,6 +135,8 @@ func _run_countdown() -> void:
 # ══════════════════════════════════ GAME LOOP ══════════════════════════════════
 func _process(delta: float) -> void:
 	if not game_on: return
+	if embedded and winner != "" and not _result_emitted:
+		_emit_embedded_result(1 if winner == "you" else 0)
 	if winner == "":
 		_update(delta)
 		if not solo and op_alive:
@@ -138,6 +165,8 @@ func _update(delta: float) -> void:
 		if absf(my_ball.x - foot_x) < BALL_R + 20.0 and absf(my_ball.y - foot_y) < BALL_R + 26.0:
 			my_kick_hit = true
 			my_kick_count += 1
+			if embedded and my_kick_count >= EMBED_WIN_KICKS:
+				winner = "you"   # kept the ball up long enough — super lands
 			var dir_x := (my_ball.x - my_x) * 1.3
 			var rnd_x := randf_range(-KICK_RAND_X, KICK_RAND_X)
 			my_bvel   = Vector2(dir_x + rnd_x, KICK_VEL_Y) * my_speed

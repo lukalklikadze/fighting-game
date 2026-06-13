@@ -6,6 +6,8 @@ signal died(player_id: int)
 signal attack_started(attack_name: String)
 signal took_hit(amount: int, from_player_id: int)
 signal blocked_hit(amount: int, from_player_id: int)
+signal super_meter_changed(current: float, maximum: float)
+signal super_full(player_id: int)
 
 @export var player_id := 1
 @export var accept_local_input := true
@@ -48,6 +50,14 @@ const SPAM_HITSTUN_FRAME_PENALTIES := [0, 2, 5, 8, 12, 16]
 const SPAM_WINDOW_TIME := 1.05
 const FULL_COMBO_INPUT_WINDOW := 0.85
 
+# --- Super meter (drives the minigame "super attacks"; see super_fight_test.gd) ---
+# Like real fighters, the meter builds from COMBAT only (never from a timer):
+# proportional to the damage you deal AND the damage you take, with the
+# defender gaining a little more so a losing player can fight back to a super
+# (a comeback mechanic, as in Street Fighter / KOF).
+const SUPER_METER_PER_DMG_DEALT := 2.0    # meter per point of damage dealt
+const SUPER_METER_PER_DMG_TAKEN := 2.6    # meter per point of damage taken
+
 enum FighterState {
 	IDLE,
 	WALK,
@@ -70,6 +80,10 @@ enum FighterState {
 
 var state: FighterState = FighterState.IDLE
 var health := max_health
+var super_meter := 0.0
+var super_max := 100.0
+var super_fill_enabled := false   # off by default; the super-fight controller turns it on
+var _super_full_sent := false
 var guard_meter := GUARD_MAX
 var facing_dir := 1
 var opponent: Node2D
@@ -118,7 +132,7 @@ var _network_sync_timer := 0.0
 var _attack_defs := {
 	"light": {
 		"animation": "arm_attack",
-		"damage": 5,
+		"damage": 3,
 		"chip_damage": 1,
 		"guard_damage": 13.0,
 		"startup": 4,
@@ -142,7 +156,7 @@ var _attack_defs := {
 	},
 	"medium": {
 		"animation": "leg_attack",
-		"damage": 9,
+		"damage": 5,
 		"chip_damage": 1,
 		"guard_damage": 22.0,
 		"startup": 7,
@@ -166,8 +180,8 @@ var _attack_defs := {
 	},
 	"heavy": {
 		"animation": "heavy_attack",
-		"damage": 18,
-		"chip_damage": 3,
+		"damage": 9,
+		"chip_damage": 2,
 		"guard_damage": 48.0,
 		"startup": 14,
 		"active": 5,
@@ -190,7 +204,7 @@ var _attack_defs := {
 	},
 	"full_combo": {
 		"animation": "full_combo",
-		"damage": 8,
+		"damage": 4,
 		"chip_damage": 1,
 		"guard_damage": 16.0,
 		"startup": 4,
@@ -216,7 +230,7 @@ var _attack_defs := {
 				"hit_id": "arm",
 				"start": 4,
 				"end": 9,
-				"damage": 5,
+				"damage": 3,
 				"chip_damage": 1,
 				"guard_damage": 12.0,
 				"hitstun": 13,
@@ -232,7 +246,7 @@ var _attack_defs := {
 				"hit_id": "leg",
 				"start": 13,
 				"end": 19,
-				"damage": 7,
+				"damage": 4,
 				"chip_damage": 1,
 				"guard_damage": 18.0,
 				"hitstun": 17,
@@ -248,7 +262,7 @@ var _attack_defs := {
 				"hit_id": "heavy_leg",
 				"start": 25,
 				"end": 34,
-				"damage": 13,
+				"damage": 7,
 				"chip_damage": 2,
 				"guard_damage": 34.0,
 				"hitstun": 28,
@@ -264,7 +278,7 @@ var _attack_defs := {
 	},
 	"air": {
 		"animation": "air_attack",
-		"damage": 9,
+		"damage": 5,
 		"chip_damage": 1,
 		"guard_damage": 18.0,
 		"startup": 5,
@@ -710,6 +724,7 @@ func _receive_clean_hit(data: Dictionary, attacker: Node2D, attack_name: String)
 	health = maxi(health - damage, 0)
 	health_changed.emit(health, max_health)
 	took_hit.emit(damage, attacker_id)
+	_grant_combat_super(attacker, damage)
 	_set_attack_hitbox_active(false)
 	_active_attack = ""
 	_queued_attack = ""
@@ -773,6 +788,7 @@ func _receive_guard_break(data: Dictionary, attacker: Node2D, attacker_id: int, 
 	health = maxi(health - damage, 0)
 	health_changed.emit(health, max_health)
 	took_hit.emit(damage, attacker_id)
+	_grant_combat_super(attacker, damage)
 	guard_meter = 0.0
 	_set_attack_hitbox_active(false)
 	_active_attack = ""
@@ -848,6 +864,57 @@ func _rpc_apply_external_recoil(source_player_id: int, push_dir: int, force: flo
 	if source == null or source.get_multiplayer_authority() != multiplayer.get_remote_sender_id():
 		return
 	apply_external_recoil(push_dir, force)
+
+
+# --- Super meter -----------------------------------------------------------
+
+# Add to this fighter's super meter; emit super_full once when it tops out.
+func add_super(amount: float) -> void:
+	if amount <= 0.0:
+		return
+	super_meter = clampf(super_meter + amount, 0.0, super_max)
+	super_meter_changed.emit(super_meter, super_max)
+	if super_meter >= super_max and not _super_full_sent:
+		_super_full_sent = true
+		super_full.emit(player_id)
+
+
+func reset_super() -> void:
+	super_meter = 0.0
+	_super_full_sent = false
+	super_meter_changed.emit(super_meter, super_max)
+
+
+# Reward both sides of a confirmed hit (gated so the plain online match is
+# unaffected: meter only moves when the controller has enabled the system).
+func _grant_combat_super(attacker: Node2D, damage: int) -> void:
+	if super_fill_enabled:
+		add_super(float(damage) * SUPER_METER_PER_DMG_TAKEN)
+	if attacker != null and attacker != self and bool(attacker.get("super_fill_enabled")):
+		attacker.call("add_super", float(damage) * SUPER_METER_PER_DMG_DEALT)
+
+
+# Damage dealt by a resolved super attack (from the minigame outcome). Routes a
+# lethal result through the normal death path so the controller's `died` handler
+# runs the resurrect/round logic.
+func apply_super_damage(amount: int) -> void:
+	if amount <= 0 or state == FighterState.DEAD:
+		return
+	health = maxi(health - amount, 0)
+	health_changed.emit(health, max_health)
+	took_hit.emit(amount, 0)
+	if health <= 0:
+		state = FighterState.DEAD
+		velocity = Vector2(0.0, -180.0)
+		_set_attack_hitbox_active(false)
+		_active_attack = ""
+		_queued_attack = ""
+		_play_anim("death", true)
+		died.emit(player_id)
+	else:
+		sprite.modulate = Color(1.0, 0.72, 0.72, 1.0)
+		_enter_state(FighterState.HITSTUN, 18)
+		_play_anim("hit", true)
 
 
 func reset_fighter(start_position: Vector2, reset_health := true) -> void:
