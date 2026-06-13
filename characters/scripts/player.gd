@@ -33,7 +33,7 @@ const PERSON_HAND_DIR := "res://assets/hand kick/"
 const PERSON_LEG_DIR := "res://assets/leg kick/"
 # walk/hand/leg = frame counts; fig_h/feet = drawn-figure height and feet offset
 # below the 1000px canvas center (from frame 0) used to scale + ground the art.
-const PERSON_TARGET_HEIGHT := 240.0
+const PERSON_TARGET_HEIGHT := 340.0
 const PERSON_SETS := {
 	"english":  {"base": "english man",  "walk": 12, "hand": 6, "leg": 8,  "fig_h": 905, "feet": 455},
 	"georgian": {"base": "georgian man", "walk": 12, "hand": 5, "leg": 10, "fig_h": 958, "feet": 466},

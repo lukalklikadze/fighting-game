@@ -6,9 +6,6 @@
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_ground"]
 size = Vector2(1240, 60)
 
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_wall"]
-size = Vector2(60, 580)
-
 [sub_resource type="WorldBoundaryShape2D" id="WorldBoundaryShape2D_ceiling"]
 normal = Vector2(0, 1)
 distance = -280.0
@@ -22,27 +19,11 @@ script = ExtResource("1_world")
 color = Color(0, 0, 0, 1)
 polygon = PackedVector2Array(-620, 232, 620, 232, 620, 240, -620, 240)
 
-[node name="LeftWallVisual" type="Polygon2D" parent="ArenaVisuals" unique_id=1142596563]
-color = Color(0, 0, 0, 1)
-polygon = PackedVector2Array(-620, -300, -604, -300, -604, 240, -620, 240)
-
-[node name="RightWallVisual" type="Polygon2D" parent="ArenaVisuals" unique_id=180352248]
-color = Color(0, 0, 0, 1)
-polygon = PackedVector2Array(604, -300, 620, -300, 620, 240, 604, 240)
-
 [node name="WorldCollision" type="StaticBody2D" parent="." unique_id=104717477]
 
 [node name="GroundCollision" type="CollisionShape2D" parent="WorldCollision" unique_id=438808134]
 position = Vector2(0, 262)
 shape = SubResource("RectangleShape2D_ground")
-
-[node name="LeftWallCollision" type="CollisionShape2D" parent="WorldCollision" unique_id=1246986665]
-position = Vector2(-590, -40)
-shape = SubResource("RectangleShape2D_wall")
-
-[node name="RightWallCollision" type="CollisionShape2D" parent="WorldCollision" unique_id=977997551]
-position = Vector2(590, -40)
-shape = SubResource("RectangleShape2D_wall")
 
 [node name="CeilingCollision" type="CollisionShape2D" parent="WorldCollision" unique_id=446948285]
 shape = SubResource("WorldBoundaryShape2D_ceiling")

@@ -8,9 +8,9 @@ class_name SpecialRegistry
 ## move on the remote peer from an RPC). Add new fighters / moves here only.
 
 const CHARACTER_ABILITY := {
-	"fighter_alpha": "yantsi",   # Georgian — ყანწი drinking-horn boomerang
-	"fighter_beta":  "trumpet",  # Scottish — bagpipe/trumpet air blast
-	"fighter_gamma": "beer",     # English  — beer-can splash
+	"georgian": "yantsi",   # ყანწი drinking-horn boomerang
+	"english":  "beer",     # beer-can throw / splash
+	"scotish":  "trumpet",  # bagpipe/trumpet knockback air blast
 }
 
 

@@ -16,9 +16,9 @@ const PLAYER_TWO_START := Vector2(260, 232)
 const MENU_FONT: FontFile = preload("res://assets/fonts/NotoSansGeorgian-Black.ttf")
 
 const FIGHTERS := [
-	{"id": "fighter_alpha", "name": "GEORGIAN", "special": "Yantsi boomerang"},
-	{"id": "fighter_beta",  "name": "SCOTTISH", "special": "Bagpipe air blast"},
-	{"id": "fighter_gamma", "name": "ENGLISH",  "special": "Beer-can splash"},
+	{"id": "georgian", "name": "GEORGIAN", "special": "Yantsi boomerang"},
+	{"id": "scotish",  "name": "SCOTTISH", "special": "Bagpipe air blast"},
+	{"id": "english",  "name": "ENGLISH",  "special": "Beer-can splash"},
 ]
 
 @onready var player_one: Node2D = $Players/PlayerOne
