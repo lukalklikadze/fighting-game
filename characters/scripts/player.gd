@@ -77,6 +77,17 @@ const FULL_COMBO_INPUT_WINDOW := 0.85
 const SUPER_METER_PER_DMG_DEALT := 2.0    # meter per point of damage dealt
 const SUPER_METER_PER_DMG_TAKEN := 2.6    # meter per point of damage taken
 
+# ── Special move ──────────────────────────────────────────────────────────────
+# Every fighter has one signature special (see characters/scripts/specials/).
+# It is triggered by a quick TRIPLE-TAP of one attack button (default heavy / L).
+# A repeated tap is used instead of a two-key chord because two keys pressed at
+# the exact same instant can fail to register on many keyboards (rollover/
+# ghosting), whereas tapping the same key is always reliable. Re-bind below.
+const SPECIAL_TAP_KEY := "heavy"            # which attack button taps (light/medium/heavy)
+const SPECIAL_TAP_COUNT := 3                # number of quick taps that fire the special
+const SPECIAL_TAP_INTERVAL := 0.30          # max seconds between consecutive taps
+const SPECIAL_CANCEL_FRAMES := 72           # the special can interrupt a normal attack in progress
+
 enum FighterState {
 	IDLE,
 	WALK,
@@ -85,6 +96,7 @@ enum FighterState {
 	DASH,
 	SLIDE,
 	ATTACK,
+	SPECIAL,
 	BLOCK,
 	BLOCKSTUN,
 	HITSTUN,
@@ -126,6 +138,13 @@ var _attack_landed := false
 var _attack_blocked := false
 var _hit_targets := {}
 var _combo_input_buffer: Array[Dictionary] = []
+
+var _special_ability: SpecialAbility = null
+var _special_cooldown := 0.0
+var _special_fired := false
+var _special_requested := false
+var _special_tap_count := 0
+var _last_attack_press := {"light": -10.0, "medium": -10.0, "heavy": -10.0}
 
 var _move_dir := 0
 var _down_held := false
@@ -321,6 +340,48 @@ var _attack_defs := {
 	},
 }
 
+# Hit payloads for the special moves. These are never started as normal attacks;
+# they are only looked up by receive_hit() (via get_attack_payload) when a
+# special's effect lands, so they reuse the exact same damage / block / knockback
+# pipeline as ordinary attacks.
+var _special_hit_defs := {
+	"special_yantsi": {
+		"damage": 14,
+		"chip_damage": 3,
+		"guard_damage": 30.0,
+		"hit_knockback": 430.0,
+		"block_knockback": 360.0,
+		"self_block_recoil": 0.0,
+		"hitstun": 26,
+		"blockstun": 14,
+		"hitstop": 8,
+	},
+	"special_trumpet": {
+		"damage": 8,
+		"chip_damage": 2,
+		"guard_damage": 26.0,
+		"hit_knockback": 760.0,
+		"block_knockback": 620.0,
+		"self_block_recoil": 0.0,
+		"hitstun": 24,
+		"blockstun": 12,
+		"hitstop": 7,
+	},
+	"special_beer": {
+		# A repeating hazard tick (the puddle damages while you stand in it), so
+		# per-hit values are modest; the anti-spam proration tapers repeats.
+		"damage": 9,
+		"chip_damage": 2,
+		"guard_damage": 20.0,
+		"hit_knockback": 200.0,
+		"block_knockback": 180.0,
+		"self_block_recoil": 0.0,
+		"hitstun": 12,
+		"blockstun": 8,
+		"hitstop": 4,
+	},
+}
+
 
 func _ready() -> void:
 	_bot_rng.randomize()
@@ -333,6 +394,7 @@ func _ready() -> void:
 	attack_hitbox.area_entered.connect(_on_attack_hitbox_area_entered)
 	_set_attack_hitbox_active(false)
 	_resolve_opponent()
+	_resolve_special_ability()
 	_enter_state(FighterState.IDLE)
 	health_changed.emit(health, max_health)
 
@@ -373,6 +435,8 @@ func _physics_process(delta: float) -> void:
 			_process_slide(delta)
 		FighterState.ATTACK:
 			_process_attack(delta)
+		FighterState.SPECIAL:
+			_process_special(delta)
 		FighterState.BLOCK:
 			_process_block(delta)
 		FighterState.BLOCKSTUN, FighterState.HITSTUN:
@@ -491,6 +555,9 @@ func _process_neutral(_delta: float) -> void:
 		_enter_state(FighterState.BLOCK)
 		return
 
+	if _special_requested and _try_start_special():
+		return
+
 	if _try_start_attack_from_input():
 		return
 
@@ -564,6 +631,10 @@ func _process_slide(delta: float) -> void:
 
 func _process_attack(delta: float) -> void:
 	_advance_state_frames(delta)
+	# The very start of a normal attack can convert into the special (so the
+	# chord still fires even though one of its keys briefly began an attack).
+	if _special_requested and _state_frame <= SPECIAL_CANCEL_FRAMES and _try_start_special():
+		return
 	var data := _attack_data()
 	var scale := _attack_movement_scale(data)
 	if is_on_floor():
@@ -620,6 +691,7 @@ func _advance_state_frames(delta: float) -> void:
 func _update_global_timers(delta: float) -> void:
 	_dash_cooldown = maxf(_dash_cooldown - delta, 0.0)
 	_slide_cooldown = maxf(_slide_cooldown - delta, 0.0)
+	_special_cooldown = maxf(_special_cooldown - delta, 0.0)
 	_repeat_hit_timer = maxf(_repeat_hit_timer - delta, 0.0)
 	if _repeat_hit_timer <= 0.0:
 		_recent_received_attacks.clear()
@@ -720,6 +792,140 @@ func _finish_attack() -> void:
 	else:
 		_enter_state(FighterState.JUMP)
 		_play_anim("idle")
+
+
+# ══════════════════════════════════ SPECIAL ════════════════════════════════════
+func _resolve_special_ability() -> void:
+	var character_id := str(get_meta("character_id", ""))
+	_special_ability = SpecialRegistry.for_character(character_id)
+
+
+func is_special_ready() -> bool:
+	return _special_ability != null \
+		and _special_cooldown <= 0.0 \
+		and state != FighterState.DEAD \
+		and state != FighterState.HITSTUN \
+		and state != FighterState.BLOCKSTUN \
+		and state != FighterState.SPECIAL
+
+
+func _try_start_special() -> bool:
+	_special_requested = false
+	if not is_special_ready() or not is_on_floor():
+		return false
+	_start_special()
+	return true
+
+
+func _start_special() -> void:
+	_special_fired = false
+	_active_attack = ""
+	_queued_attack = ""
+	_hit_targets.clear()
+	_set_attack_hitbox_active(false)
+	_enter_state(FighterState.SPECIAL)
+	# Cooldown starts the moment the move is committed, not when it connects.
+	_special_cooldown = _special_ability.cooldown()
+	velocity.x = 0.0
+	_play_anim(_special_ability.user_animation(), true)
+	attack_started.emit("special:" + _special_ability.id())
+	_broadcast_critical_network_state()
+
+
+func _process_special(delta: float) -> void:
+	_advance_state_frames(delta)
+	velocity.x = move_toward(velocity.x, 0.0, 2200.0 * delta)
+	if _special_ability == null:
+		_finish_special()
+		return
+	if not _special_fired and _state_frame >= _special_ability.windup_frames():
+		_fire_special()
+	if _state_frame >= _special_ability.total_frames():
+		_finish_special()
+
+
+func _fire_special() -> void:
+	_special_fired = true
+	if _special_ability == null:
+		return
+	var dir := facing_dir
+	var origin := special_hand_position()
+	# Authoritative cast (deals damage) on this machine...
+	_special_ability.cast(self, true, origin, dir)
+	# ...and a visual-only copy on the other peer so both screens match.
+	if multiplayer.has_multiplayer_peer():
+		_rpc_cast_special.rpc(_special_ability.id(), origin, dir)
+
+
+func _finish_special() -> void:
+	_special_fired = false
+	if is_on_floor():
+		_enter_state(FighterState.IDLE)
+		_play_anim("idle")
+	else:
+		_enter_state(FighterState.JUMP)
+		_play_anim("idle")
+
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_cast_special(ability_id: String, origin: Vector2, dir: int) -> void:
+	if is_multiplayer_authority():
+		return
+	var ability := SpecialRegistry.make(ability_id)
+	if ability == null:
+		return
+	ability.cast(self, false, origin, dir)
+
+
+# World-space spawn point of a thrown object — a "hand" in front of the fighter.
+func special_hand_position() -> Vector2:
+	return global_position + Vector2(46.0 * float(facing_dir), -96.0)
+
+
+# Adds a special's effect node into the shared world (the Players container).
+func spawn_world_effect(node: Node2D) -> void:
+	var parent := get_parent()
+	if parent != null:
+		parent.add_child(node)
+	else:
+		add_child(node)
+
+
+# Routes a special's hit through the exact same path as a melee hit: over the
+# network to the target's authority if remote, otherwise applied directly.
+func deal_special_hit(target, attack_name: String) -> void:
+	if _is_remote_network_player() or target == null or not is_instance_valid(target):
+		return
+	if not target.has_method("receive_hit"):
+		return
+	var data := get_attack_payload(attack_name)
+	if data.is_empty():
+		return
+	if _try_send_network_hit(target, data, attack_name):
+		return
+	target.receive_hit(int(data["damage"]), self, float(data["hit_knockback"]), attack_name)
+
+
+# ── HUD helpers ──────────────────────────────────────────────────────────────
+func has_special() -> bool:
+	return _special_ability != null
+
+
+func get_special_name() -> String:
+	return "" if _special_ability == null else _special_ability.display_name()
+
+
+func get_special_cooldown_remaining() -> float:
+	return _special_cooldown
+
+
+func get_special_cooldown_total() -> float:
+	return 0.0 if _special_ability == null else _special_ability.cooldown()
+
+
+# Test/debug helper — instantly recharges the special.
+func reset_special_cooldown() -> void:
+	_special_cooldown = 0.0
 
 
 func _try_start_dash() -> bool:
@@ -1021,6 +1227,12 @@ func reset_fighter(start_position: Vector2, reset_health := true) -> void:
 	_last_received_attacker_id = 0
 	_repeat_hit_timer = 0.0
 	_network_sync_timer = 0.0
+	_special_cooldown = 0.0
+	_special_fired = false
+	_special_requested = false
+	_special_tap_count = 0
+	_last_attack_press = {"light": -10.0, "medium": -10.0, "heavy": -10.0}
+	_resolve_special_ability()
 	if reset_health:
 		health = max_health
 		health_changed.emit(health, max_health)
@@ -1138,6 +1350,8 @@ func get_attack_payload(attack_name: String) -> Dictionary:
 		base_attack_name = attack_name.split(":")[0]
 	if _active_attack == base_attack_name:
 		return _current_attack_hit_data()
+	if _special_hit_defs.has(base_attack_name):
+		return _special_hit_defs[base_attack_name].duplicate(true)
 	if not _attack_defs.has(base_attack_name):
 		return {}
 	return _attack_defs[base_attack_name].duplicate(true)
@@ -1301,6 +1515,7 @@ func _read_local_inputs() -> void:
 	_guard_held = Input.is_physical_key_pressed(GUARD_KEY) and not simple
 	_jump_pressed = _consume_just_pressed(KEY_W) and not simple
 	_attack_requests.clear()
+	_special_requested = false
 
 	var light_pressed := _consume_just_pressed(KEY_J)
 	var medium_pressed := _consume_just_pressed(KEY_K)
@@ -1311,6 +1526,29 @@ func _read_local_inputs() -> void:
 		_record_combo_input("medium")
 	if heavy_pressed:
 		_record_combo_input("heavy")
+
+	# Special move: SPECIAL_TAP_COUNT quick taps of the SPECIAL_TAP_KEY attack
+	# button. The last tap converts the normal attack in progress into the special.
+	var now := Time.get_ticks_msec() / 1000.0
+	var tap_pressed := false
+	match SPECIAL_TAP_KEY:
+		"light":
+			tap_pressed = light_pressed
+		"medium":
+			tap_pressed = medium_pressed
+		_:
+			tap_pressed = heavy_pressed
+	if tap_pressed:
+		var prev_tap: float = float(_last_attack_press[SPECIAL_TAP_KEY])
+		if prev_tap > 0.0 and (now - prev_tap) <= SPECIAL_TAP_INTERVAL:
+			_special_tap_count += 1
+		else:
+			_special_tap_count = 1
+		_last_attack_press[SPECIAL_TAP_KEY] = now
+		if is_special_ready() and _special_tap_count >= SPECIAL_TAP_COUNT:
+			_special_requested = true
+			_special_tap_count = 0
+			_last_attack_press[SPECIAL_TAP_KEY] = -10.0
 
 	if (light_pressed and medium_pressed and heavy_pressed) or _consume_full_combo_sequence():
 		_attack_requests.append("full_combo")
@@ -1323,6 +1561,11 @@ func _read_local_inputs() -> void:
 		_attack_requests.append("medium")
 	if heavy_pressed:
 		_attack_requests.append("heavy")
+
+	# When the chord fires this frame, suppress the fresh normal attack so the
+	# press converts cleanly into the special instead.
+	if _special_requested:
+		_attack_requests.clear()
 
 
 func _record_combo_input(attack_name: String) -> void:
@@ -1513,7 +1756,7 @@ func _ground_speed_for_input(input_dir: int) -> float:
 
 
 func _update_facing() -> void:
-	if state != FighterState.DASH and state != FighterState.SLIDE and state != FighterState.ATTACK and state != FighterState.HITSTUN and state != FighterState.BLOCKSTUN and state != FighterState.DEAD:
+	if state != FighterState.DASH and state != FighterState.SLIDE and state != FighterState.ATTACK and state != FighterState.SPECIAL and state != FighterState.HITSTUN and state != FighterState.BLOCKSTUN and state != FighterState.DEAD:
 		if opponent != null and is_instance_valid(opponent):
 			var distance := opponent.global_position.x - global_position.x
 			if absf(distance) > 2.0:
@@ -1653,6 +1896,8 @@ func _state_name() -> String:
 			return "slide"
 		FighterState.ATTACK:
 			return "attack"
+		FighterState.SPECIAL:
+			return "special"
 		FighterState.BLOCK:
 			return "block"
 		FighterState.BLOCKSTUN:
