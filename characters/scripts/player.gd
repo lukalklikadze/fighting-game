@@ -34,15 +34,17 @@ const PERSON_HAND_DIR := "res://assets/hand kick/"
 const PERSON_LEG_DIR := "res://assets/leg kick/"
 const PERSON_JUMP_DIR := "res://assets/jump/"
 const PERSON_HARD_DIR := "res://assets/hard hit/"
+const PERSON_IDLE_DIR := "res://assets/idle/"
+const SCOTISH_PIPE_IMG := "res://assets/bagpipe.png"
 # walk/hand/leg/hard = frame counts; jump = explicit (sparse) frame numbers;
 # dash = a single hard-hit frame reused as the dash pose; fig_h/feet =
 # drawn-figure height and feet offset below the 1000px canvas center (from
 # frame 0) used to scale + ground the art.
 const PERSON_TARGET_HEIGHT := 340.0
 const PERSON_SETS := {
-	"english":  {"base": "english man",  "walk": 12, "hand": 6, "leg": 8,  "hard": 16, "jump": [0, 6, 9],  "dash": 4, "fig_h": 905, "feet": 455},
-	"georgian": {"base": "georgian man", "walk": 12, "hand": 5, "leg": 10, "hard": 27, "jump": [4, 14],    "dash": 9, "fig_h": 958, "feet": 466},
-	"scotish":  {"base": "scotish man",  "walk": 12, "hand": 6, "leg": 11, "hard": 14, "jump": [0, 6, 17],  "dash": 7, "fig_h": 922, "feet": 449},
+	"english":  {"base": "english man",  "walk": 12, "idle": 12, "hand": 6, "leg": 8,  "hard": 16, "jump": [0, 6, 9],  "dash": 4, "fig_h": 905, "feet": 455},
+	"georgian": {"base": "georgian man", "walk": 12, "idle": 12, "hand": 5, "leg": 10, "hard": 27, "jump": [4, 14],    "dash": 9, "fig_h": 958, "feet": 466},
+	"scotish":  {"base": "scotish man",  "walk": 12, "idle": 12, "hand": 6, "leg": 11, "hard": 14, "jump": [0, 6, 17],  "dash": 7, "fig_h": 922, "feet": 449, "pipe": true},
 }
 
 # Hand-drawn attacks are timed FROM their art: each plays once across the whole
@@ -511,10 +513,17 @@ func _build_person_frames(info: Dictionary) -> void:
 	_add_person_anim(frames, "air_attack", PERSON_LEG_DIR, base, 0, leg_n - 1, float(PERSON_ATK_FPS["air"]), false, false)
 	_add_person_anim_list(frames, "jump_start", PERSON_JUMP_DIR, base, info["jump"], 10.0, false, false)
 	_add_person_anim_list(frames, "dash", PERSON_HARD_DIR, base, [info["dash"]], 6.0, false, false)
-	_add_person_anim(frames, "idle", PERSON_WALK_DIR, base, 0, 0, 6.0, true, false)
+	_add_person_anim(frames, "idle", PERSON_IDLE_DIR, base, 0, int(info["idle"]) - 1, 9.0, true, false)
 	for still in ["slide", "hit", "death"]:
-		_add_person_anim(frames, still, PERSON_WALK_DIR, base, 0, 0, 6.0, false, false)
+		_add_person_anim(frames, still, PERSON_IDLE_DIR, base, 0, 0, 6.0, false, false)
 	_add_person_anim(frames, "full_combo", PERSON_LEG_DIR, base, 0, leg_n - 1, 16.0, false, false)
+	# Scotsman holds the bagpipe ("windpipe") pose while the air is blown out --
+	# the trumpet special plays this during its wind-up (see TrumpetBlast).
+	if bool(info.get("pipe", false)):
+		frames.add_animation("bagpipe")
+		frames.set_animation_speed("bagpipe", 6.0)
+		frames.set_animation_loop("bagpipe", true)
+		frames.add_frame("bagpipe", load(SCOTISH_PIPE_IMG))
 
 	sprite.sprite_frames = frames
 	_retune_person_attacks(info)

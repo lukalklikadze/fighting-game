@@ -18,13 +18,13 @@ func cooldown() -> float:
 	return 15.0
 
 func windup_frames() -> int:
-	return 20                          # punch wind-up (pipe animation comes later)
+	return 20                          # holds the bagpipe before the air blows out
 
 func total_frames() -> int:
 	return 44
 
 func user_animation() -> String:
-	return "arm_attack"
+	return "bagpipe"                   # Scotsman holds the windpipe pose
 
 
 func cast(user, authoritative: bool, origin: Vector2, dir: int) -> void:
