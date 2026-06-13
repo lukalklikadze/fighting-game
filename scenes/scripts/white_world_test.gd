@@ -77,6 +77,8 @@ var _p1_health_bar: ProgressBar
 var _p2_health_bar: ProgressBar
 var _p1_health_text: Label
 var _p2_health_text: Label
+var _p1_special_label: Label
+var _p2_special_label: Label
 
 var _hover_by_player := {1: 0, 2: 0}
 var _locked_by_player := {1: false, 2: false}
@@ -119,6 +121,7 @@ func _process(delta: float) -> void:
 			_process_select_input()
 		ScreenState.MATCH:
 			_update_camera()
+			_refresh_special_hud()
 			_process_match_end()
 			_handle_debug_reset()
 
@@ -424,6 +427,11 @@ func _build_health_hud(layer: CanvasLayer) -> void:
 	_p1_health_text.custom_minimum_size = Vector2(78, 28)
 	p1_box.add_child(_p1_health_text)
 
+	_p1_special_label = _make_fight_label("", 14)
+	_p1_special_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_p1_special_label.custom_minimum_size = Vector2(104, 28)
+	p1_box.add_child(_p1_special_label)
+
 	var center_label := _make_fight_label("VS", 18)
 	center_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	center_label.custom_minimum_size = Vector2(46, 28)
@@ -445,6 +453,11 @@ func _build_health_hud(layer: CanvasLayer) -> void:
 	_p2_health_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_p2_health_text.custom_minimum_size = Vector2(78, 28)
 	p2_box.add_child(_p2_health_text)
+
+	_p2_special_label = _make_fight_label("", 14)
+	_p2_special_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_p2_special_label.custom_minimum_size = Vector2(104, 28)
+	p2_box.add_child(_p2_special_label)
 
 
 func _make_menu_label(text: String, size: int, color: Color) -> Label:
@@ -587,6 +600,7 @@ func _show_match_screen() -> void:
 		_victory_label.visible = false
 	_set_match_enabled(true)
 	_refresh_health_hud()
+	_refresh_special_hud()
 
 
 func _set_match_enabled(enabled: bool) -> void:
@@ -1302,9 +1316,16 @@ func _resolve_client_peer_id(client_peer_id: int) -> int:
 
 
 func _reset_match() -> void:
+	_clear_special_effects()
 	player_one.call("reset_fighter", PLAYER_ONE_START)
 	player_two.call("reset_fighter", PLAYER_TWO_START)
 	_refresh_health_hud()
+
+
+func _clear_special_effects() -> void:
+	# Remove any in-flight horns / splashes / gusts left over from the last round.
+	for node in get_tree().get_nodes_in_group("special_effects"):
+		node.queue_free()
 
 
 func _on_peer_connected(peer_id: int) -> void:
@@ -1388,6 +1409,26 @@ func _update_health_bar(bar: ProgressBar, text_label: Label, current_health: int
 func _update_camera() -> void:
 	var midpoint: Vector2 = (player_one.global_position + player_two.global_position) * 0.5
 	camera.global_position = Vector2(midpoint.x, 10.0)
+
+
+func _refresh_special_hud() -> void:
+	_update_special_label(_p1_special_label, player_one)
+	_update_special_label(_p2_special_label, player_two)
+
+
+func _update_special_label(label: Label, player: Node2D) -> void:
+	if label == null or player == null:
+		return
+	if not bool(player.call("has_special")):
+		label.text = ""
+		return
+	var remaining: float = float(player.call("get_special_cooldown_remaining"))
+	if remaining <= 0.0:
+		label.text = "SP: READY"
+		label.add_theme_color_override("font_color", Color(1.0, 0.90, 0.30, 1.0))
+	else:
+		label.text = "SP: %ds" % int(ceil(remaining))
+		label.add_theme_color_override("font_color", Color(0.66, 0.68, 0.72, 1.0))
 
 
 func _handle_debug_reset() -> void:

@@ -1,0 +1,63 @@
+[gd_scene format=3 uid="uid://chucr6g3go73o"]
+
+[ext_resource type="Script" path="res://scenes/scripts/bot_test.gd" id="1_bottest"]
+[ext_resource type="PackedScene" path="res://characters/scenes/Player.tscn" id="2_player"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_ground"]
+size = Vector2(1240, 60)
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_wall"]
+size = Vector2(60, 580)
+
+[sub_resource type="WorldBoundaryShape2D" id="WorldBoundaryShape2D_ceiling"]
+normal = Vector2(0, 1)
+distance = -280.0
+
+[node name="BotTest" type="Node2D"]
+script = ExtResource("1_bottest")
+
+[node name="ArenaVisuals" type="Node2D" parent="."]
+
+[node name="GroundVisual" type="Polygon2D" parent="ArenaVisuals"]
+color = Color(0, 0, 0, 1)
+polygon = PackedVector2Array(-620, 232, 620, 232, 620, 240, -620, 240)
+
+[node name="LeftWallVisual" type="Polygon2D" parent="ArenaVisuals"]
+color = Color(0, 0, 0, 1)
+polygon = PackedVector2Array(-620, -300, -604, -300, -604, 240, -620, 240)
+
+[node name="RightWallVisual" type="Polygon2D" parent="ArenaVisuals"]
+color = Color(0, 0, 0, 1)
+polygon = PackedVector2Array(604, -300, 620, -300, 620, 240, 604, 240)
+
+[node name="WorldCollision" type="StaticBody2D" parent="."]
+
+[node name="GroundCollision" type="CollisionShape2D" parent="WorldCollision"]
+position = Vector2(0, 262)
+shape = SubResource("RectangleShape2D_ground")
+
+[node name="LeftWallCollision" type="CollisionShape2D" parent="WorldCollision"]
+position = Vector2(-590, -40)
+shape = SubResource("RectangleShape2D_wall")
+
+[node name="RightWallCollision" type="CollisionShape2D" parent="WorldCollision"]
+position = Vector2(590, -40)
+shape = SubResource("RectangleShape2D_wall")
+
+[node name="CeilingCollision" type="CollisionShape2D" parent="WorldCollision"]
+shape = SubResource("WorldBoundaryShape2D_ceiling")
+
+[node name="Players" type="Node2D" parent="."]
+
+[node name="PlayerOne" parent="Players" instance=ExtResource("2_player")]
+position = Vector2(-260, 232)
+
+[node name="PlayerTwo" parent="Players" instance=ExtResource("2_player")]
+position = Vector2(260, 232)
+player_id = 2
+accept_local_input = false
+bot_enabled = true
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(0, 10)
+zoom = Vector2(0.9, 0.9)
