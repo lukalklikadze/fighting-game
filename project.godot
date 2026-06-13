@@ -1,18 +1,41 @@
 ; Engine configuration file.
 ; It's best edited using the editor UI and not directly,
-; but the file format is supported, so it's possible.
-
-; [section] ; comment
-; key=value
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
 
 config_version=5
+
+[animation]
+
+compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 [application]
 
 config/name="2D Fighting Game"
-config/features=PackedStringArray("4.3", "Forward Plus")
 config/tags=PackedStringArray("multiplayer", "fighting", "2d")
+run/main_scene="res://scenes/WhiteWorldTest.tscn"
+config/features=PackedStringArray("4.6", "Forward Plus")
 
-[rendering]
+[autoload]
 
-renderer/rendering_method="forward_plus"
+MCPGameBridge="res://addons/godot_mcp/game_bridge/mcp_game_bridge.gd"
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/godot_mcp/plugin.cfg")
+
+[godot_mcp]
+
+bind_mode=0
+custom_bind_ip=""
+port_override_enabled=false
+port_override=6550

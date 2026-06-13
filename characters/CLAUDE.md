@@ -44,6 +44,13 @@ characters/
 ## State Machine
 
 Recommended player states:
-`IDLE` → `WALK` → `JUMP` → `ATTACK` → `HIT` → `DEAD`
+`IDLE` → `WALK` → `JUMP` → `ATTACK` → `BLOCK` → `HIT` → `DEAD`
 
 Use an enum and `match` statement in `_physics_process`.
+
+## Arcade Combat Notes
+
+- Attacks should be driven by frame data first: startup frames, active frames, recovery frames, hitstun, blockstun, hitstop, and cancel windows.
+- Fast attacks should recover quickly and chain more easily.
+- Slow/heavy attacks should deal more damage but be punishable during startup and recovery.
+- Keep block behavior separate from block animation so the real block sprite can be added later without rewriting combat logic.

@@ -1,0 +1,1224 @@
+extends CharacterBody2D
+class_name FightingPlayer
+
+signal health_changed(current_health: int, max_health: int)
+signal died(player_id: int)
+signal attack_started(attack_name: String)
+signal took_hit(amount: int, from_player_id: int)
+signal blocked_hit(amount: int, from_player_id: int)
+
+@export var player_id := 1
+@export var accept_local_input := true
+@export var bot_enabled := false
+@export var max_health := 100
+@export var opponent_path: NodePath
+@export var bot_preferred_range := 145.0
+@export var bot_attack_range := 190.0
+
+const SPRITE_DIR := "res://assets/Fighter sprites/"
+const FRAME_TIME := 1.0 / 60.0
+const NETWORK_SYNC_INTERVAL := 1.0 / 30.0
+
+const WALK_SPEED := 540.0
+const BACKWARD_SPEED := 380.0
+const AIR_SPEED := 500.0
+const JUMP_VELOCITY := -1160.0
+const GRAVITY := 2850.0
+const MAX_FALL_SPEED := 1650.0
+const DASH_SPEED := 1260.0
+const DASH_FRAMES := 8
+const DASH_COOLDOWN := 0.30
+const DOUBLE_TAP_TIME := 0.22
+const GUARD_KEY := KEY_I
+const GUARD_MAX := 100.0
+const GUARD_MIN_TO_BLOCK := 8.0
+const GUARD_REGEN_DELAY := 0.85
+const GUARD_REGEN_RATE := 32.0
+const GUARD_HOLD_DRAIN := 13.0
+const GUARD_BREAK_STUN_FRAMES := 38
+const PUSHBOX_WIDTH := 58.0
+const PUSHBOX_HEIGHT := 140.0
+const PUSHBOX_Y_OFFSET := -70.0
+const SPAM_WINDOW_SIZE := 6
+const SPAM_DAMAGE_SCALES := [1.0, 0.82, 0.65, 0.48, 0.36, 0.28]
+const SPAM_HITSTUN_FRAME_PENALTIES := [0, 2, 5, 8, 12, 16]
+const SPAM_WINDOW_TIME := 1.05
+
+enum FighterState {
+	IDLE,
+	WALK,
+	CROUCH,
+	JUMP,
+	DASH,
+	ATTACK,
+	BLOCK,
+	BLOCKSTUN,
+	HITSTUN,
+	DEAD,
+}
+
+@onready var sprite: AnimatedSprite2D = $Visual/AnimatedSprite2D
+@onready var body_shape: CollisionShape2D = $CollisionShape2D
+@onready var attack_hitbox: Area2D = $AttackHitbox
+@onready var attack_hitbox_shape: CollisionShape2D = $AttackHitbox/AttackHitboxShape
+@onready var hurtbox_shape: CollisionShape2D = $Hurtbox/HurtboxShape
+
+var state: FighterState = FighterState.IDLE
+var health := max_health
+var guard_meter := GUARD_MAX
+var facing_dir := 1
+var opponent: Node2D
+
+var _state_frame := 0
+var _frame_accum := 0.0
+var _state_timer := 0.0
+var _hitstop_timer := 0.0
+var _dash_cooldown := 0.0
+var _guard_regen_delay := 0.0
+var _last_left_tap := -10.0
+var _last_right_tap := -10.0
+
+var _active_attack := ""
+var _queued_attack := ""
+var _attack_landed := false
+var _attack_blocked := false
+var _hit_targets := {}
+
+var _move_dir := 0
+var _down_held := false
+var _guard_held := false
+var _jump_pressed := false
+var _attack_requests: Array[String] = []
+var _key_down := {}
+var _just_pressed := {}
+
+var _bot_mode := "wait"
+var _bot_mode_timer := 0.0
+var _bot_attack_cooldown := 0.0
+var _bot_rng := RandomNumberGenerator.new()
+
+var _recent_received_attacks: Array[String] = []
+var _last_received_attacker_id := 0
+var _repeat_hit_timer := 0.0
+var _network_sync_timer := 0.0
+
+var _attack_defs := {
+	"light": {
+		"animation": "arm_attack",
+		"damage": 5,
+		"chip_damage": 1,
+		"guard_damage": 13.0,
+		"startup": 4,
+		"active": 3,
+		"recovery": 10,
+		"hitstun": 14,
+		"blockstun": 10,
+		"hitstop": 4,
+		"hit_knockback": 270.0,
+		"block_knockback": 320.0,
+		"self_block_recoil": 370.0,
+		"cancel_frame": 7,
+		"chains": ["light", "medium", "heavy"],
+		"frames": [64, 65, 66, 67, 68],
+		"anim_speed": 34.0,
+		"hitbox_offset": Vector2(76.0, -86.0),
+		"hitbox_size": Vector2(88.0, 62.0),
+		"move_startup": 0.92,
+		"move_active": 0.52,
+		"move_recovery": 0.28,
+	},
+	"medium": {
+		"animation": "leg_attack",
+		"damage": 9,
+		"chip_damage": 1,
+		"guard_damage": 22.0,
+		"startup": 7,
+		"active": 4,
+		"recovery": 14,
+		"hitstun": 20,
+		"blockstun": 13,
+		"hitstop": 6,
+		"hit_knockback": 380.0,
+		"block_knockback": 430.0,
+		"self_block_recoil": 500.0,
+		"cancel_frame": 12,
+		"chains": ["heavy"],
+		"frames": [69, 70, 71, 72, 73, 74],
+		"anim_speed": 28.0,
+		"hitbox_offset": Vector2(90.0, -76.0),
+		"hitbox_size": Vector2(112.0, 58.0),
+		"move_startup": 0.78,
+		"move_active": 0.42,
+		"move_recovery": 0.18,
+	},
+	"heavy": {
+		"animation": "heavy_attack",
+		"damage": 18,
+		"chip_damage": 3,
+		"guard_damage": 48.0,
+		"startup": 14,
+		"active": 5,
+		"recovery": 24,
+		"hitstun": 34,
+		"blockstun": 18,
+		"hitstop": 9,
+		"hit_knockback": 610.0,
+		"block_knockback": 690.0,
+		"self_block_recoil": 820.0,
+		"cancel_frame": 999,
+		"chains": [],
+		"frames": [75, 76, 77, 78, 79, 80, 81, 82],
+		"anim_speed": 18.0,
+		"hitbox_offset": Vector2(108.0, -82.0),
+		"hitbox_size": Vector2(132.0, 82.0),
+		"move_startup": 0.58,
+		"move_active": 0.22,
+		"move_recovery": 0.08,
+	},
+	"air": {
+		"animation": "air_attack",
+		"damage": 9,
+		"chip_damage": 1,
+		"guard_damage": 18.0,
+		"startup": 5,
+		"active": 9,
+		"recovery": 18,
+		"hitstun": 22,
+		"blockstun": 12,
+		"hitstop": 6,
+		"hit_knockback": 350.0,
+		"block_knockback": 360.0,
+		"self_block_recoil": 420.0,
+		"cancel_frame": 999,
+		"chains": [],
+		"frames": [62, 63],
+		"anim_speed": 8.0,
+		"hitbox_offset": Vector2(82.0, -94.0),
+		"hitbox_size": Vector2(104.0, 76.0),
+		"move_startup": 0.94,
+		"move_active": 0.68,
+		"move_recovery": 0.45,
+	},
+}
+
+
+func _ready() -> void:
+	_bot_rng.randomize()
+	health = max_health
+	if attack_hitbox_shape.shape != null:
+		attack_hitbox_shape.shape = attack_hitbox_shape.shape.duplicate()
+	if hurtbox_shape.shape != null:
+		hurtbox_shape.shape = hurtbox_shape.shape.duplicate()
+	_build_sprite_frames()
+	attack_hitbox.area_entered.connect(_on_attack_hitbox_area_entered)
+	_set_attack_hitbox_active(false)
+	_resolve_opponent()
+	_enter_state(FighterState.IDLE)
+	health_changed.emit(health, max_health)
+
+
+func _physics_process(delta: float) -> void:
+	_resolve_opponent()
+	_poll_key_edges()
+
+	if _is_remote_network_player():
+		return
+
+	if bot_enabled:
+		_update_bot_ai(delta)
+	else:
+		_read_local_inputs()
+
+	_update_facing()
+	_update_global_timers(delta)
+
+	if _hitstop_timer > 0.0:
+		_hitstop_timer = maxf(_hitstop_timer - delta, 0.0)
+		if _hitstop_timer <= 0.0:
+			sprite.speed_scale = 1.0
+		_sync_network_state(delta)
+		return
+
+	if state != FighterState.DEAD and not is_on_floor():
+		velocity.y = minf(velocity.y + GRAVITY * delta, MAX_FALL_SPEED)
+
+	match state:
+		FighterState.IDLE, FighterState.WALK, FighterState.CROUCH:
+			_process_neutral(delta)
+		FighterState.JUMP:
+			_process_jump(delta)
+		FighterState.DASH:
+			_process_dash(delta)
+		FighterState.ATTACK:
+			_process_attack(delta)
+		FighterState.BLOCK:
+			_process_block(delta)
+		FighterState.BLOCKSTUN, FighterState.HITSTUN:
+			_process_stun(delta)
+		FighterState.DEAD:
+			_process_dead(delta)
+
+	move_and_slide()
+	_resolve_pushbox_overlap()
+	_sync_network_state(delta)
+
+
+func _build_sprite_frames() -> void:
+	var frames := SpriteFrames.new()
+	frames.remove_animation("default")
+	_add_numbered_animation(frames, "idle", "fighter_Idle_", 1, 8, 12.0, true)
+	_add_numbered_animation(frames, "walk", "fighter_walk_", 9, 16, 22.0, true)
+	_add_numbered_animation(frames, "dash", "fighter_dash_", 33, 38, 32.0, false)
+	_add_numbered_animation(frames, "jump_start", "fighter_jump_", 43, 47, 34.0, false)
+	_add_numbered_animation(frames, "hit", "fighter_hit_", 48, 51, 22.0, false)
+	_add_numbered_animation(frames, "death", "fighter_death_", 52, 61, 18.0, false)
+	for attack_name in ["light", "medium", "heavy"]:
+		var data: Dictionary = _attack_defs[attack_name]
+		_add_combo_animation(frames, data["animation"], data["frames"], float(data["anim_speed"]))
+	_add_numbered_animation(frames, "air_attack", "fighter_air_attack_", 62, 63, float(_attack_defs["air"]["anim_speed"]), false)
+	sprite.sprite_frames = frames
+
+
+func _add_numbered_animation(frames: SpriteFrames, animation_name: String, prefix: String, first_frame: int, last_frame: int, speed: float, loops: bool) -> void:
+	frames.add_animation(animation_name)
+	frames.set_animation_speed(animation_name, speed)
+	frames.set_animation_loop(animation_name, loops)
+	for frame_number in range(first_frame, last_frame + 1):
+		frames.add_frame(animation_name, load("%s%s%04d.png" % [SPRITE_DIR, prefix, frame_number]))
+
+
+func _add_combo_animation(frames: SpriteFrames, animation_name: String, frame_numbers: Array, speed: float) -> void:
+	frames.add_animation(animation_name)
+	frames.set_animation_speed(animation_name, speed)
+	frames.set_animation_loop(animation_name, false)
+	for frame_number in frame_numbers:
+		frames.add_frame(animation_name, load("%sfighter_combo_%04d.png" % [SPRITE_DIR, frame_number]))
+
+
+func _process_neutral(_delta: float) -> void:
+	if _guard_held and _can_guard():
+		_enter_state(FighterState.BLOCK)
+		return
+
+	if _try_start_attack_from_input():
+		return
+
+	if _jump_pressed and is_on_floor():
+		velocity.y = JUMP_VELOCITY
+		_enter_state(FighterState.JUMP)
+		_play_anim("jump_start", true)
+		return
+
+	if is_on_floor() and _try_start_dash():
+		return
+
+	if _down_held and is_on_floor():
+		velocity.x = 0.0
+		_enter_state(FighterState.CROUCH)
+		_play_anim("idle")
+		return
+
+	var speed := _ground_speed_for_input(_move_dir)
+	velocity.x = speed
+	if _move_dir == 0:
+		_enter_state(FighterState.IDLE)
+		_play_anim("idle")
+	elif _is_forward_input(_move_dir):
+		_enter_state(FighterState.WALK)
+		_play_anim("walk")
+	else:
+		_enter_state(FighterState.IDLE)
+		_play_anim("idle")
+
+
+func _process_jump(_delta: float) -> void:
+	if _try_start_attack_from_input():
+		return
+
+	if _move_dir != 0:
+		velocity.x = float(_move_dir) * AIR_SPEED
+
+	if is_on_floor() and velocity.y >= 0.0:
+		velocity.y = 0.0
+		_enter_state(FighterState.IDLE)
+		_play_anim("idle")
+	else:
+		_play_anim("idle")
+
+
+func _process_dash(delta: float) -> void:
+	_advance_state_frames(delta)
+	velocity.x = float(facing_dir) * DASH_SPEED
+	if _state_frame >= DASH_FRAMES:
+		velocity.x = 0.0
+		_enter_state(FighterState.IDLE)
+		_play_anim("idle")
+
+
+func _process_attack(delta: float) -> void:
+	_advance_state_frames(delta)
+	var data := _attack_data()
+	var scale := _attack_movement_scale(data)
+	if is_on_floor():
+		velocity.x = _ground_speed_for_input(_move_dir) * scale
+	elif _move_dir != 0:
+		velocity.x = float(_move_dir) * AIR_SPEED * scale
+
+	_try_queue_attack()
+	_update_attack_hitbox_for_frame()
+
+	if _state_frame >= _attack_total_frames(data):
+		if _queued_attack != "":
+			var next_attack := _queued_attack
+			_queued_attack = ""
+			_start_attack(next_attack)
+			return
+		_finish_attack()
+
+
+func _process_block(delta: float) -> void:
+	guard_meter = maxf(guard_meter - GUARD_HOLD_DRAIN * delta, 0.0)
+	_guard_regen_delay = GUARD_REGEN_DELAY
+	velocity.x = 0.0
+	_set_guard_visual()
+	_play_anim("idle")
+
+	if guard_meter <= 0.0 or not _guard_held:
+		_enter_state(FighterState.IDLE)
+		_reset_visual_tint()
+		_play_anim("idle")
+
+
+func _process_stun(delta: float) -> void:
+	_advance_state_frames(delta)
+	velocity.x = move_toward(velocity.x, 0.0, 1150.0 * delta)
+	if _state_frame >= int(_state_timer):
+		_enter_state(FighterState.IDLE)
+		_reset_visual_tint()
+		_play_anim("idle")
+
+
+func _process_dead(delta: float) -> void:
+	velocity.x = move_toward(velocity.x, 0.0, WALK_SPEED * delta)
+	velocity.y = minf(velocity.y + GRAVITY * delta, MAX_FALL_SPEED)
+
+
+func _advance_state_frames(delta: float) -> void:
+	_frame_accum += delta
+	while _frame_accum >= FRAME_TIME:
+		_frame_accum -= FRAME_TIME
+		_state_frame += 1
+
+
+func _update_global_timers(delta: float) -> void:
+	_dash_cooldown = maxf(_dash_cooldown - delta, 0.0)
+	_repeat_hit_timer = maxf(_repeat_hit_timer - delta, 0.0)
+	if _repeat_hit_timer <= 0.0:
+		_recent_received_attacks.clear()
+		_last_received_attacker_id = 0
+
+	if _guard_regen_delay > 0.0:
+		_guard_regen_delay = maxf(_guard_regen_delay - delta, 0.0)
+	elif state != FighterState.BLOCK and state != FighterState.BLOCKSTUN and state != FighterState.HITSTUN and state != FighterState.DEAD and not _guard_held:
+		guard_meter = minf(guard_meter + GUARD_REGEN_RATE * delta, GUARD_MAX)
+
+
+func _try_start_attack_from_input() -> bool:
+	if _attack_requests.is_empty():
+		return false
+	if state == FighterState.JUMP or not is_on_floor():
+		_start_attack("air")
+		return true
+	_start_attack(_attack_requests[0])
+	return true
+
+
+func _try_queue_attack() -> void:
+	if _attack_requests.is_empty() or _queued_attack != "":
+		return
+	var requested := _attack_requests[0]
+	if _can_cancel_into(requested):
+		_queued_attack = requested
+
+
+func _can_cancel_into(attack_name: String) -> bool:
+	if _active_attack == "" or _active_attack == "air":
+		return false
+	var data := _attack_data()
+	if _state_frame < int(data["cancel_frame"]):
+		return false
+	var chains: Array = data["chains"]
+	if not (_attack_landed or _attack_blocked):
+		return false
+	return chains.has(attack_name)
+
+
+func _start_attack(attack_name: String) -> void:
+	if not _attack_defs.has(attack_name) or state == FighterState.DEAD or state == FighterState.HITSTUN:
+		return
+	_active_attack = attack_name
+	_queued_attack = ""
+	_attack_landed = false
+	_attack_blocked = false
+	_hit_targets.clear()
+	_enter_state(FighterState.ATTACK)
+	var data := _attack_data()
+	_play_anim(data["animation"], true)
+	_update_attack_hitbox_shape()
+	_update_attack_hitbox_for_frame()
+	attack_started.emit(attack_name)
+
+
+func _finish_attack() -> void:
+	_set_attack_hitbox_active(false)
+	_active_attack = ""
+	_queued_attack = ""
+	_hit_targets.clear()
+	if is_on_floor():
+		_enter_state(FighterState.IDLE)
+		_play_anim("idle")
+	else:
+		_enter_state(FighterState.JUMP)
+		_play_anim("idle")
+
+
+func _try_start_dash() -> bool:
+	if bot_enabled or _dash_cooldown > 0.0 or not _is_forward_input(_move_dir):
+		return false
+
+	var now := Time.get_ticks_msec() / 1000.0
+	if _move_dir > 0:
+		if now - _last_right_tap <= DOUBLE_TAP_TIME:
+			_start_dash()
+			return true
+		_last_right_tap = now
+	else:
+		if now - _last_left_tap <= DOUBLE_TAP_TIME:
+			_start_dash()
+			return true
+		_last_left_tap = now
+	return false
+
+
+func _start_dash() -> void:
+	_dash_cooldown = DASH_COOLDOWN
+	_last_left_tap = -10.0
+	_last_right_tap = -10.0
+	_enter_state(FighterState.DASH)
+	_play_anim("dash", true)
+
+
+func receive_hit(amount: int, attacker: Node2D, knockback: float = 260.0, attack_name := "") -> Dictionary:
+	if _is_remote_network_player() or state == FighterState.DEAD:
+		return {"connected": false}
+
+	var data := {}
+	if attacker != null and attacker.has_method("get_attack_payload"):
+		data = attacker.call("get_attack_payload", attack_name)
+	if data.is_empty():
+		data = {
+			"damage": amount,
+			"chip_damage": maxi(1, amount / 8),
+			"guard_damage": maxf(10.0, float(amount) * 2.0),
+			"hit_knockback": knockback,
+			"block_knockback": knockback * 0.75,
+			"self_block_recoil": knockback * 0.65,
+			"hitstun": 18,
+			"blockstun": 10,
+			"hitstop": 5,
+		}
+
+	if _should_block_attack(data):
+		return _receive_blocked_hit(data, attacker)
+
+	return _receive_clean_hit(data, attacker, attack_name)
+
+
+func _receive_clean_hit(data: Dictionary, attacker: Node2D, attack_name: String) -> Dictionary:
+	var attacker_id := int(attacker.get("player_id")) if attacker != null else 0
+	var proration := _register_received_attack(attacker_id, attack_name)
+	var damage := maxi(1, int(ceil(float(data["damage"]) * float(proration["damage_scale"]))))
+	var hitstun_frames := maxi(4, int(data["hitstun"]) - int(proration["hitstun_penalty"]))
+	var hit_from_dir := _hit_direction_from(attacker)
+
+	health = maxi(health - damage, 0)
+	health_changed.emit(health, max_health)
+	took_hit.emit(damage, attacker_id)
+	_set_attack_hitbox_active(false)
+	_active_attack = ""
+	_queued_attack = ""
+
+	if health <= 0:
+		state = FighterState.DEAD
+		velocity.x = float(hit_from_dir) * float(data["hit_knockback"])
+		velocity.y = minf(velocity.y, -180.0)
+		_play_anim("death", true)
+		_start_hitstop(int(data["hitstop"]))
+		_broadcast_critical_network_state()
+		died.emit(player_id)
+		return {"connected": true, "blocked": false}
+
+	_enter_state(FighterState.HITSTUN, hitstun_frames)
+	velocity.x = float(hit_from_dir) * float(data["hit_knockback"])
+	velocity.y = minf(velocity.y, -120.0)
+	sprite.modulate = Color(1.0, 0.72, 0.72, 1.0)
+	_play_anim("hit", true)
+	_start_hitstop(int(data["hitstop"]))
+	if attacker != null and attacker.has_method("_start_hitstop"):
+		attacker.call("_start_hitstop", int(data["hitstop"]))
+	_broadcast_critical_network_state()
+	return {"connected": true, "blocked": false}
+
+
+func _receive_blocked_hit(data: Dictionary, attacker: Node2D) -> Dictionary:
+	var attacker_id := int(attacker.get("player_id")) if attacker != null else 0
+	var hit_from_dir := _hit_direction_from(attacker)
+	var guard_damage := float(data["guard_damage"])
+	guard_meter = maxf(guard_meter - guard_damage, 0.0)
+	_guard_regen_delay = GUARD_REGEN_DELAY
+
+	if guard_meter <= 0.0:
+		return _receive_guard_break(data, attacker, attacker_id, hit_from_dir)
+
+	var chip := int(data["chip_damage"])
+	health = maxi(health - chip, 1)
+	health_changed.emit(health, max_health)
+	blocked_hit.emit(chip, attacker_id)
+
+	_enter_state(FighterState.BLOCKSTUN, int(data["blockstun"]))
+	velocity.x = float(hit_from_dir) * float(data["block_knockback"])
+	velocity.y = minf(velocity.y, 0.0)
+	_set_attack_hitbox_active(false)
+	_active_attack = ""
+	_queued_attack = ""
+	_set_guard_visual()
+	_play_anim("idle", true)
+	_start_hitstop(int(data["hitstop"]))
+	if attacker != null:
+		if attacker.has_method("_start_hitstop"):
+			attacker.call("_start_hitstop", int(data["hitstop"]))
+		_apply_recoil_to_fighter(attacker, -hit_from_dir, float(data["self_block_recoil"]))
+	_broadcast_critical_network_state()
+	return {"connected": true, "blocked": true}
+
+
+func _receive_guard_break(data: Dictionary, attacker: Node2D, attacker_id: int, hit_from_dir: int) -> Dictionary:
+	var damage := maxi(1, int(data["chip_damage"]) + 8)
+	health = maxi(health - damage, 0)
+	health_changed.emit(health, max_health)
+	took_hit.emit(damage, attacker_id)
+	guard_meter = 0.0
+	_set_attack_hitbox_active(false)
+	_active_attack = ""
+	_queued_attack = ""
+
+	if health <= 0:
+		state = FighterState.DEAD
+		velocity.x = float(hit_from_dir) * float(data["hit_knockback"])
+		velocity.y = minf(velocity.y, -180.0)
+		_play_anim("death", true)
+		_broadcast_critical_network_state()
+		died.emit(player_id)
+		return {"connected": true, "blocked": false}
+
+	_enter_state(FighterState.HITSTUN, GUARD_BREAK_STUN_FRAMES)
+	velocity.x = float(hit_from_dir) * maxf(float(data["block_knockback"]), 560.0)
+	velocity.y = minf(velocity.y, -150.0)
+	sprite.modulate = Color(1.0, 0.50, 0.24, 1.0)
+	_play_anim("hit", true)
+	_start_hitstop(int(data["hitstop"]) + 4)
+	if attacker != null and attacker.has_method("_start_hitstop"):
+		attacker.call("_start_hitstop", int(data["hitstop"]) + 4)
+	_broadcast_critical_network_state()
+	return {"connected": true, "blocked": false}
+
+
+func _register_received_attack(attacker_id: int, attack_name: String) -> Dictionary:
+	if attacker_id == 0 or attack_name == "":
+		return {"damage_scale": 1.0, "hitstun_penalty": 0}
+	if attacker_id != _last_received_attacker_id or _repeat_hit_timer <= 0.0:
+		_recent_received_attacks.clear()
+
+	var same_attack_count := 0
+	for recent in _recent_received_attacks:
+		if recent == attack_name:
+			same_attack_count += 1
+
+	_recent_received_attacks.append(attack_name)
+	while _recent_received_attacks.size() > SPAM_WINDOW_SIZE:
+		_recent_received_attacks.pop_front()
+
+	_last_received_attacker_id = attacker_id
+	_repeat_hit_timer = SPAM_WINDOW_TIME
+
+	return {
+		"damage_scale": SPAM_DAMAGE_SCALES[mini(same_attack_count, SPAM_DAMAGE_SCALES.size() - 1)],
+		"hitstun_penalty": SPAM_HITSTUN_FRAME_PENALTIES[mini(same_attack_count, SPAM_HITSTUN_FRAME_PENALTIES.size() - 1)],
+	}
+
+
+func _apply_recoil_to_fighter(fighter: Node, push_dir: int, force: float) -> void:
+	if fighter == null or not fighter.has_method("apply_external_recoil"):
+		return
+	var target_peer_id := fighter.get_multiplayer_authority()
+	if multiplayer.has_multiplayer_peer() and target_peer_id != multiplayer.get_unique_id():
+		fighter.rpc_id(target_peer_id, "_rpc_apply_external_recoil", player_id, push_dir, force)
+	else:
+		fighter.call("apply_external_recoil", push_dir, force)
+
+
+func apply_external_recoil(push_dir: int, force: float) -> void:
+	if _is_remote_network_player() or state == FighterState.DEAD:
+		return
+	velocity.x = float(push_dir) * force
+	_broadcast_critical_network_state()
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_apply_external_recoil(source_player_id: int, push_dir: int, force: float) -> void:
+	if not is_multiplayer_authority():
+		return
+	var source := _find_fighter_by_player_id(source_player_id)
+	if source == null or source.get_multiplayer_authority() != multiplayer.get_remote_sender_id():
+		return
+	apply_external_recoil(push_dir, force)
+
+
+func reset_fighter(start_position: Vector2, reset_health := true) -> void:
+	global_position = start_position
+	velocity = Vector2.ZERO
+	guard_meter = GUARD_MAX
+	_guard_regen_delay = 0.0
+	_dash_cooldown = 0.0
+	_hitstop_timer = 0.0
+	_active_attack = ""
+	_queued_attack = ""
+	_hit_targets.clear()
+	_recent_received_attacks.clear()
+	_last_received_attacker_id = 0
+	_repeat_hit_timer = 0.0
+	_network_sync_timer = 0.0
+	if reset_health:
+		health = max_health
+		health_changed.emit(health, max_health)
+	_set_attack_hitbox_active(false)
+	sprite.speed_scale = 1.0
+	_reset_visual_tint()
+	_update_facing()
+	_enter_state(FighterState.IDLE)
+	_play_anim("idle", true)
+
+
+func _mcp_state() -> Dictionary:
+	return {
+		"player_id": player_id,
+		"health": health,
+		"max_health": max_health,
+		"guard": guard_meter,
+		"state": _state_name(),
+		"facing_dir": facing_dir,
+		"accept_local_input": accept_local_input,
+		"bot_enabled": bot_enabled,
+		"bot_mode": _bot_mode,
+		"active_attack": _active_attack,
+		"state_frame": _state_frame,
+	}
+
+
+func _sync_network_state(delta: float) -> void:
+	if not multiplayer.has_multiplayer_peer() or not is_multiplayer_authority():
+		return
+	_network_sync_timer -= delta
+	if _network_sync_timer > 0.0:
+		return
+	_network_sync_timer = NETWORK_SYNC_INTERVAL
+	_send_network_state(false)
+
+
+func _broadcast_critical_network_state() -> void:
+	if not multiplayer.has_multiplayer_peer() or not is_multiplayer_authority():
+		return
+	_network_sync_timer = NETWORK_SYNC_INTERVAL
+	_send_network_state(true)
+
+
+func _send_network_state(reliable: bool) -> void:
+	var args := [
+		global_position,
+		velocity,
+		facing_dir,
+		int(state),
+		health,
+		guard_meter,
+		_active_attack,
+		_state_frame,
+		str(sprite.animation),
+		sprite.frame,
+		sprite.is_playing(),
+		sprite.modulate,
+	]
+	if reliable:
+		_rpc_apply_critical_network_state.rpc(args)
+	else:
+		_rpc_apply_network_state.rpc(args)
+
+
+@rpc("authority", "call_remote", "unreliable")
+func _rpc_apply_network_state(args: Array) -> void:
+	_apply_network_state(args)
+
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_apply_critical_network_state(args: Array) -> void:
+	_apply_network_state(args)
+
+
+func _apply_network_state(args: Array) -> void:
+	if is_multiplayer_authority() or args.size() < 12:
+		return
+	global_position = args[0]
+	velocity = args[1]
+	facing_dir = int(args[2])
+	state = int(args[3])
+	var previous_health := health
+	health = int(args[4])
+	guard_meter = float(args[5])
+	_active_attack = str(args[6])
+	_state_frame = int(args[7])
+	if previous_health != health:
+		health_changed.emit(health, max_health)
+	_apply_remote_sprite(str(args[8]), int(args[9]), bool(args[10]), args[11])
+	_update_attack_hitbox_shape()
+	_update_attack_hitbox_for_frame()
+
+
+func _apply_remote_sprite(animation_name: String, frame_index: int, playing: bool, color: Color) -> void:
+	sprite.flip_h = facing_dir < 0
+	sprite.modulate = color
+	if sprite.sprite_frames == null or not sprite.sprite_frames.has_animation(animation_name):
+		return
+	if sprite.animation != animation_name:
+		sprite.play(animation_name)
+	var frame_count := sprite.sprite_frames.get_frame_count(animation_name)
+	if frame_count > 0:
+		sprite.frame = clampi(frame_index, 0, frame_count - 1)
+	if playing:
+		if not sprite.is_playing():
+			sprite.play(animation_name)
+	else:
+		sprite.pause()
+
+
+func get_attack_payload(attack_name: String) -> Dictionary:
+	if not _attack_defs.has(attack_name):
+		return {}
+	return _attack_defs[attack_name].duplicate(true)
+
+
+func _on_attack_hitbox_area_entered(area: Area2D) -> void:
+	_try_hit_area(area)
+
+
+func _check_attack_overlaps() -> void:
+	for area in attack_hitbox.get_overlapping_areas():
+		_try_hit_area(area)
+
+
+func _try_hit_area(area: Area2D) -> void:
+	if _is_remote_network_player() or state != FighterState.ATTACK or _active_attack == "":
+		return
+	var target := _find_fighter_from_area(area)
+	if target == null or target == self:
+		return
+	var target_id := target.get_instance_id()
+	if _hit_targets.has(target_id):
+		return
+	_hit_targets[target_id] = true
+
+	var data := _attack_data()
+	if _try_send_network_hit(target, data):
+		_attack_landed = true
+		return
+
+	if target.has_method("receive_hit"):
+		var result = target.receive_hit(int(data["damage"]), self, float(data["hit_knockback"]), _active_attack)
+		if result is Dictionary and bool(result.get("connected", false)):
+			_attack_landed = not bool(result.get("blocked", false))
+			_attack_blocked = bool(result.get("blocked", false))
+
+
+func _try_send_network_hit(target: Node, data: Dictionary) -> bool:
+	if not multiplayer.has_multiplayer_peer():
+		return false
+	if not target.has_method("_is_remote_network_player") or not bool(target.call("_is_remote_network_player")):
+		return false
+	var target_peer_id := target.get_multiplayer_authority()
+	if target_peer_id <= 0 or target_peer_id == multiplayer.get_unique_id():
+		return false
+	target.rpc_id(target_peer_id, "_rpc_receive_hit_from_peer", int(data["damage"]), player_id, float(data["hit_knockback"]), _active_attack)
+	return true
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_receive_hit_from_peer(amount: int, attacker_player_id: int, knockback: float, attack_name: String) -> void:
+	if not is_multiplayer_authority() or attacker_player_id == player_id:
+		return
+	var attacker := _find_fighter_by_player_id(attacker_player_id)
+	if attacker == null or attacker.get_multiplayer_authority() != multiplayer.get_remote_sender_id():
+		return
+	receive_hit(amount, attacker, knockback, attack_name)
+
+
+func _find_fighter_by_player_id(search_player_id: int) -> Node2D:
+	var players_root := get_parent()
+	if players_root != null:
+		for child in players_root.get_children():
+			if child != self and child is Node2D and child.has_method("receive_hit") and int(child.get("player_id")) == search_player_id:
+				return child
+	if opponent != null and int(opponent.get("player_id")) == search_player_id:
+		return opponent
+	return null
+
+
+func _find_fighter_from_area(area: Area2D) -> Node:
+	var node: Node = area
+	while node != null:
+		if node.has_method("receive_hit"):
+			return node
+		node = node.get_parent()
+	return null
+
+
+func _update_attack_hitbox_for_frame() -> void:
+	var active := state == FighterState.ATTACK and _attack_phase() == "active"
+	_set_attack_hitbox_active(active)
+	if active:
+		_check_attack_overlaps()
+
+
+func _set_attack_hitbox_active(active: bool) -> void:
+	attack_hitbox.monitoring = active
+	attack_hitbox_shape.disabled = not active
+
+
+func _update_attack_hitbox_shape() -> void:
+	var offset := Vector2(84.0, -86.0)
+	var size := Vector2(96.0, 82.0)
+	if _active_attack != "" and _attack_defs.has(_active_attack):
+		var data := _attack_data()
+		offset = data["hitbox_offset"]
+		size = data["hitbox_size"]
+	attack_hitbox.position = Vector2(offset.x * facing_dir, offset.y)
+	var shape := attack_hitbox_shape.shape as RectangleShape2D
+	if shape != null:
+		shape.size = size
+
+
+func _resolve_pushbox_overlap() -> void:
+	if opponent == null or not is_instance_valid(opponent) or not opponent.has_method("get_pushbox_rect"):
+		return
+	if state == FighterState.DEAD or int(opponent.get("state")) == FighterState.DEAD:
+		return
+	var mine := get_pushbox_rect()
+	var theirs: Rect2 = opponent.call("get_pushbox_rect")
+	if not mine.intersects(theirs):
+		return
+	var overlap := minf(mine.end.x, theirs.end.x) - maxf(mine.position.x, theirs.position.x)
+	if overlap <= 0.0:
+		return
+	var side := signf(global_position.x - opponent.global_position.x)
+	if side == 0.0:
+		side = -1.0 if player_id == 1 else 1.0
+	global_position.x += side * overlap * 0.5
+
+
+func get_pushbox_rect() -> Rect2:
+	var size := Vector2(PUSHBOX_WIDTH, PUSHBOX_HEIGHT)
+	var shape := body_shape.shape as RectangleShape2D
+	if shape != null:
+		size = shape.size
+	return Rect2(global_position + Vector2(-size.x * 0.5, PUSHBOX_Y_OFFSET - size.y * 0.5), size)
+
+
+func _resolve_opponent() -> void:
+	if opponent != null and is_instance_valid(opponent):
+		return
+	if opponent_path != NodePath():
+		opponent = get_node_or_null(opponent_path)
+		if opponent != null:
+			return
+	for fighter in get_tree().get_nodes_in_group("fighters"):
+		if fighter != self and fighter is Node2D:
+			opponent = fighter
+			return
+
+
+func _read_local_inputs() -> void:
+	_move_dir = 0
+	if Input.is_physical_key_pressed(KEY_A):
+		_move_dir -= 1
+	if Input.is_physical_key_pressed(KEY_D):
+		_move_dir += 1
+	_down_held = Input.is_physical_key_pressed(KEY_S)
+	_guard_held = Input.is_physical_key_pressed(GUARD_KEY)
+	_jump_pressed = _consume_just_pressed(KEY_W)
+	_attack_requests.clear()
+	if _consume_just_pressed(KEY_J):
+		_attack_requests.append("light")
+	if _consume_just_pressed(KEY_K):
+		_attack_requests.append("medium")
+	if _consume_just_pressed(KEY_L):
+		_attack_requests.append("heavy")
+
+
+func _update_bot_ai(delta: float) -> void:
+	_move_dir = 0
+	_down_held = false
+	_guard_held = false
+	_jump_pressed = false
+	_attack_requests.clear()
+	_bot_attack_cooldown = maxf(_bot_attack_cooldown - delta, 0.0)
+	_bot_mode_timer = maxf(_bot_mode_timer - delta, 0.0)
+
+	if state == FighterState.DEAD or state == FighterState.HITSTUN or state == FighterState.BLOCKSTUN:
+		return
+	if opponent == null or not is_instance_valid(opponent):
+		return
+
+	var distance_x := opponent.global_position.x - global_position.x
+	var abs_distance := absf(distance_x)
+	var to_opponent := int(signf(distance_x))
+	if to_opponent == 0:
+		to_opponent = facing_dir
+
+	if _bot_mode_timer <= 0.0:
+		_choose_bot_mode(abs_distance)
+
+	match _bot_mode:
+		"approach":
+			_move_dir = to_opponent
+		"retreat":
+			_move_dir = -to_opponent
+		"guard":
+			_guard_held = guard_meter >= GUARD_MIN_TO_BLOCK
+		"jump":
+			_jump_pressed = is_on_floor()
+			_move_dir = to_opponent if _bot_rng.randf() < 0.45 else -to_opponent
+		"poke":
+			if abs_distance > bot_attack_range * 0.85:
+				_move_dir = to_opponent
+			elif _bot_attack_cooldown <= 0.0:
+				_attack_requests.append("light" if _bot_rng.randf() < 0.62 else "medium")
+				_bot_attack_cooldown = _bot_rng.randf_range(0.24, 0.48)
+		"heavy":
+			if abs_distance > bot_attack_range:
+				_move_dir = to_opponent
+			elif _bot_attack_cooldown <= 0.0:
+				_attack_requests.append("heavy")
+				_bot_attack_cooldown = _bot_rng.randf_range(0.50, 0.90)
+		_:
+			pass
+
+	if int(opponent.get("state")) == FighterState.ATTACK and abs_distance <= bot_attack_range and guard_meter >= GUARD_MIN_TO_BLOCK and _bot_rng.randf() < 0.45:
+		_attack_requests.clear()
+		_guard_held = true
+		_move_dir = 0
+
+
+func _choose_bot_mode(abs_distance: float) -> void:
+	var roll := _bot_rng.randf()
+	if abs_distance < bot_preferred_range:
+		if roll < 0.24:
+			_bot_mode = "retreat"
+		elif roll < 0.42:
+			_bot_mode = "guard"
+		elif roll < 0.58:
+			_bot_mode = "jump"
+		elif roll < 0.86:
+			_bot_mode = "poke"
+		else:
+			_bot_mode = "heavy"
+	elif abs_distance < bot_attack_range * 1.65:
+		if roll < 0.20:
+			_bot_mode = "retreat"
+		elif roll < 0.34:
+			_bot_mode = "guard"
+		elif roll < 0.52:
+			_bot_mode = "jump"
+		elif roll < 0.82:
+			_bot_mode = "approach"
+		else:
+			_bot_mode = "poke"
+	else:
+		if roll < 0.18:
+			_bot_mode = "wait"
+		elif roll < 0.36:
+			_bot_mode = "jump"
+		elif roll < 0.48:
+			_bot_mode = "guard"
+		else:
+			_bot_mode = "approach"
+	_bot_mode_timer = _bot_rng.randf_range(0.18, 0.62)
+
+
+func _poll_key_edges() -> void:
+	_just_pressed.clear()
+	if not _has_local_input():
+		_key_down.clear()
+		return
+	for key_code in [KEY_A, KEY_D, KEY_W, KEY_S, KEY_J, KEY_K, KEY_L, GUARD_KEY]:
+		var pressed := Input.is_physical_key_pressed(key_code)
+		var was_pressed := bool(_key_down.get(key_code, false))
+		_just_pressed[key_code] = pressed and not was_pressed
+		_key_down[key_code] = pressed
+
+
+func _consume_just_pressed(key_code: Key) -> bool:
+	var result := bool(_just_pressed.get(key_code, false))
+	_just_pressed[key_code] = false
+	return result
+
+
+func _has_local_input() -> bool:
+	if not accept_local_input:
+		return false
+	if multiplayer.has_multiplayer_peer():
+		return is_multiplayer_authority()
+	return true
+
+
+func _is_remote_network_player() -> bool:
+	return multiplayer.has_multiplayer_peer() and not is_multiplayer_authority()
+
+
+func _can_guard() -> bool:
+	return is_on_floor() and guard_meter >= GUARD_MIN_TO_BLOCK and state != FighterState.HITSTUN and state != FighterState.DEAD
+
+
+func _should_block_attack(data: Dictionary) -> bool:
+	if bool(data.get("unblockable", false)) or not is_on_floor():
+		return false
+	if guard_meter < GUARD_MIN_TO_BLOCK:
+		return false
+	if not (state == FighterState.IDLE or state == FighterState.WALK or state == FighterState.CROUCH or state == FighterState.BLOCK or state == FighterState.BLOCKSTUN):
+		return false
+	return _guard_held or state == FighterState.BLOCKSTUN
+
+
+func _is_forward_input(input_dir: int) -> bool:
+	return input_dir != 0 and sign(input_dir) == facing_dir
+
+
+func _ground_speed_for_input(input_dir: int) -> float:
+	if input_dir == 0:
+		return 0.0
+	return float(input_dir) * (WALK_SPEED if _is_forward_input(input_dir) else BACKWARD_SPEED)
+
+
+func _update_facing() -> void:
+	if state != FighterState.ATTACK and state != FighterState.HITSTUN and state != FighterState.BLOCKSTUN and state != FighterState.DEAD:
+		if opponent != null and is_instance_valid(opponent):
+			var distance := opponent.global_position.x - global_position.x
+			if absf(distance) > 2.0:
+				facing_dir = 1 if distance > 0.0 else -1
+	sprite.flip_h = facing_dir < 0
+	_update_attack_hitbox_shape()
+
+
+func _enter_state(new_state: FighterState, timer_frames := 0) -> void:
+	if state == new_state and timer_frames == 0:
+		return
+	state = new_state
+	_state_frame = 0
+	_frame_accum = 0.0
+	_state_timer = float(timer_frames)
+	if new_state != FighterState.ATTACK:
+		_set_attack_hitbox_active(false)
+
+
+func _attack_data() -> Dictionary:
+	if _active_attack == "" or not _attack_defs.has(_active_attack):
+		return {}
+	return _attack_defs[_active_attack]
+
+
+func _attack_total_frames(data: Dictionary) -> int:
+	return int(data["startup"]) + int(data["active"]) + int(data["recovery"])
+
+
+func _attack_phase() -> String:
+	if state != FighterState.ATTACK or _active_attack == "":
+		return "none"
+	var data := _attack_data()
+	if _state_frame < int(data["startup"]):
+		return "startup"
+	if _state_frame < int(data["startup"]) + int(data["active"]):
+		return "active"
+	if _state_frame < _attack_total_frames(data):
+		return "recovery"
+	return "done"
+
+
+func _attack_movement_scale(data: Dictionary) -> float:
+	match _attack_phase():
+		"startup":
+			return float(data["move_startup"])
+		"active":
+			return float(data["move_active"])
+		"recovery":
+			return float(data["move_recovery"])
+		_:
+			return 1.0
+
+
+func _start_hitstop(frames: int) -> void:
+	_hitstop_timer = maxf(_hitstop_timer, float(frames) * FRAME_TIME)
+	sprite.speed_scale = 0.0
+
+
+func _set_guard_visual() -> void:
+	sprite.modulate = Color(0.38, 0.62, 1.0, 1.0)
+
+
+func _reset_visual_tint() -> void:
+	sprite.modulate = Color.WHITE
+
+
+func _play_anim(animation_name: String, force := false) -> void:
+	if sprite.animation == animation_name and sprite.is_playing() and not force:
+		return
+	sprite.speed_scale = 1.0
+	sprite.play(animation_name)
+
+
+func _hit_direction_from(attacker: Node2D) -> int:
+	if attacker == null:
+		return -facing_dir
+	var direction := int(signf(global_position.x - attacker.global_position.x))
+	return direction if direction != 0 else -facing_dir
+
+
+func _state_name() -> String:
+	match state:
+		FighterState.IDLE:
+			return "idle"
+		FighterState.WALK:
+			return "walk"
+		FighterState.CROUCH:
+			return "crouch"
+		FighterState.JUMP:
+			return "jump"
+		FighterState.DASH:
+			return "dash"
+		FighterState.ATTACK:
+			return "attack"
+		FighterState.BLOCK:
+			return "block"
+		FighterState.BLOCKSTUN:
+			return "blockstun"
+		FighterState.HITSTUN:
+			return "hitstun"
+		FighterState.DEAD:
+			return "dead"
+		_:
+			return "unknown"

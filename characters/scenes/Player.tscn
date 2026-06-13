@@ -1,0 +1,46 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://characters/scripts/player.gd" id="1_player"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_body"]
+size = Vector2(58, 140)
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_hurtbox"]
+size = Vector2(72, 144)
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_attack"]
+size = Vector2(96, 82)
+
+[node name="Player" type="CharacterBody2D" groups=["fighters"]]
+collision_layer = 8
+collision_mask = 1
+floor_stop_on_slope = false
+script = ExtResource("1_player")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+position = Vector2(0, -70)
+shape = SubResource("RectangleShape2D_body")
+
+[node name="Visual" type="Node2D" parent="."]
+position = Vector2(0, -88)
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="Visual"]
+
+[node name="Hurtbox" type="Area2D" parent="." groups=["hurtboxes"]]
+position = Vector2(0, -72)
+collision_layer = 2
+collision_mask = 0
+
+[node name="HurtboxShape" type="CollisionShape2D" parent="Hurtbox"]
+shape = SubResource("RectangleShape2D_hurtbox")
+
+[node name="AttackHitbox" type="Area2D" parent="."]
+position = Vector2(84, -86)
+collision_layer = 4
+collision_mask = 2
+monitoring = false
+monitorable = false
+
+[node name="AttackHitboxShape" type="CollisionShape2D" parent="AttackHitbox"]
+shape = SubResource("RectangleShape2D_attack")
+disabled = true

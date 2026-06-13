@@ -5,6 +5,7 @@
 # Export/import
 export.cfg
 export_presets.cfg
+builds/
 
 # Mono/C# specific
 .mono/
