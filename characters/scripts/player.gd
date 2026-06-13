@@ -47,20 +47,26 @@ const PERSON_SETS := {
 	"scotish":  {"base": "scotish man",  "walk": 12, "idle": 12, "hand": 6, "leg": 10, "hard": 14, "jump": [0, 6, 17],  "dash": 9, "fig_h": 922, "feet": 449, "pipe": true},
 }
 
-# Hand-drawn attacks are timed FROM their art: each plays once across the whole
-# move at this readable fps, and the hit lands near the end of the swing (so the
-# strike connects when the drawn arm/leg is extended, not at the wind-up start).
-const PERSON_ATK_FPS := {"light": 26.0, "medium": 24.0, "heavy": 22.0, "air": 18.0}
-# Map each attack to the animation whose frame count drives its timing.
+# Arcade (MK-style) attack tuning -- fast and committed. dur = whole-move
+# seconds; hit = startup as a fraction of dur; active = active-window fraction.
+# The drawn swing plays once across the move (kept readable), the hit lands
+# snappily mid-swing, and recovery is short: quick, punchy strikes.
+const PERSON_ATK_DUR := {"light": 0.20, "medium": 0.26, "heavy": 0.40, "air": 0.30}
+const PERSON_ATK_HIT := {"light": 0.40, "medium": 0.42, "heavy": 0.45, "air": 0.22}
+const PERSON_ATK_ACTIVE := {"light": 0.30, "medium": 0.26, "heavy": 0.22, "air": 0.55}
+# Map each attack to the animation whose frame count drives its playback speed.
 const PERSON_ATK_ANIM := {"light": "hand", "medium": "leg", "heavy": "hard", "air": "leg"}
 
-const WALK_SPEED := 540.0
-const BACKWARD_SPEED := 380.0
-const AIR_SPEED := 500.0
-const JUMP_VELOCITY := -1160.0
-const GRAVITY := 2850.0
-const MAX_FALL_SPEED := 1650.0
-const DASH_SPEED := 1260.0
+# Arcade (Mortal-Kombat-style) feel: fast crisp walks, big snappy jumps, quick
+# dashes. Movement is set directly each frame (no momentum drift), so releasing
+# a direction stops you instantly -- the hallmark of an arcade fighter.
+const WALK_SPEED := 700.0
+const BACKWARD_SPEED := 540.0
+const AIR_SPEED := 660.0
+const JUMP_VELOCITY := -1320.0
+const GRAVITY := 3050.0
+const MAX_FALL_SPEED := 1750.0
+const DASH_SPEED := 1520.0
 const DASH_FRAMES := 8
 const DASH_COOLDOWN := 0.42
 const SLIDE_SPEED := 1040.0
@@ -88,8 +94,8 @@ const FULL_COMBO_INPUT_WINDOW := 0.85
 # proportional to the damage you deal AND the damage you take, with the
 # defender gaining a little more so a losing player can fight back to a super
 # (a comeback mechanic, as in Street Fighter / KOF).
-const SUPER_METER_PER_DMG_DEALT := 2.0    # meter per point of damage dealt
-const SUPER_METER_PER_DMG_TAKEN := 2.6    # meter per point of damage taken
+const SUPER_METER_PER_DMG_DEALT := 1.0    # meter per point of damage dealt
+const SUPER_METER_PER_DMG_TAKEN := 1.4    # meter per point of damage taken
 
 # ── Special move ──────────────────────────────────────────────────────────────
 # Every fighter has one signature special (see characters/scripts/specials/).
@@ -184,7 +190,7 @@ var _network_sync_timer := 0.0
 var _attack_defs := {
 	"light": {
 		"animation": "arm_attack",
-		"damage": 3,
+		"damage": 7,
 		"chip_damage": 1,
 		"guard_damage": 13.0,
 		"startup": 4,
@@ -192,7 +198,7 @@ var _attack_defs := {
 		"recovery": 10,
 		"hitstun": 14,
 		"blockstun": 10,
-		"hitstop": 4,
+		"hitstop": 6,
 		"hit_knockback": 270.0,
 		"block_knockback": 320.0,
 		"self_block_recoil": 370.0,
@@ -208,7 +214,7 @@ var _attack_defs := {
 	},
 	"medium": {
 		"animation": "leg_attack",
-		"damage": 3,
+		"damage": 9,
 		"chip_damage": 1,
 		"guard_damage": 22.0,
 		"startup": 7,
@@ -216,7 +222,7 @@ var _attack_defs := {
 		"recovery": 14,
 		"hitstun": 20,
 		"blockstun": 13,
-		"hitstop": 6,
+		"hitstop": 8,
 		"hit_knockback": 380.0,
 		"block_knockback": 430.0,
 		"self_block_recoil": 500.0,
@@ -232,7 +238,7 @@ var _attack_defs := {
 	},
 	"heavy": {
 		"animation": "heavy_attack",
-		"damage": 9,
+		"damage": 18,
 		"chip_damage": 2,
 		"guard_damage": 48.0,
 		"startup": 14,
@@ -240,8 +246,8 @@ var _attack_defs := {
 		"recovery": 24,
 		"hitstun": 34,
 		"blockstun": 18,
-		"hitstop": 9,
-		"hit_knockback": 610.0,
+		"hitstop": 12,
+		"hit_knockback": 720.0,
 		"block_knockback": 690.0,
 		"self_block_recoil": 820.0,
 		"cancel_frame": 999,
@@ -330,7 +336,7 @@ var _attack_defs := {
 	},
 	"air": {
 		"animation": "air_attack",
-		"damage": 5,
+		"damage": 11,
 		"chip_damage": 1,
 		"guard_damage": 18.0,
 		"startup": 5,
@@ -507,10 +513,11 @@ func _build_person_frames(info: Dictionary) -> void:
 
 	_add_person_anim(frames, "walk", PERSON_WALK_DIR, base, 0, walk_n - 1, 14.0, true, false)
 	_add_person_anim(frames, "walk_back", PERSON_WALK_DIR, base, 0, walk_n - 1, 14.0, true, true)
-	_add_person_anim(frames, "arm_attack", PERSON_HAND_DIR, base, 0, hand_n - 1, float(PERSON_ATK_FPS["light"]), false, false)
-	_add_person_anim(frames, "leg_attack", PERSON_LEG_DIR, base, 0, leg_n - 1, float(PERSON_ATK_FPS["medium"]), false, false)
-	_add_person_anim(frames, "heavy_attack", PERSON_HARD_DIR, base, 0, hard_n - 1, float(PERSON_ATK_FPS["heavy"]), false, false)
-	_add_person_anim(frames, "air_attack", PERSON_LEG_DIR, base, 0, leg_n - 1, float(PERSON_ATK_FPS["air"]), false, false)
+	# Attack playback speeds are set in _retune_person_attacks (fit to each move).
+	_add_person_anim(frames, "arm_attack", PERSON_HAND_DIR, base, 0, hand_n - 1, 16.0, false, false)
+	_add_person_anim(frames, "leg_attack", PERSON_LEG_DIR, base, 0, leg_n - 1, 16.0, false, false)
+	_add_person_anim(frames, "heavy_attack", PERSON_HARD_DIR, base, 0, hard_n - 1, 16.0, false, false)
+	_add_person_anim(frames, "air_attack", PERSON_LEG_DIR, base, 0, leg_n - 1, 16.0, false, false)
 	_add_person_anim_list(frames, "jump_start", PERSON_JUMP_DIR, base, info["jump"], 10.0, false, false)
 	_add_person_anim_list(frames, "dash", PERSON_HARD_DIR, base, [info["dash"]], 6.0, false, false)
 	_add_person_anim(frames, "idle", PERSON_IDLE_DIR, base, 0, int(info["idle"]) - 1, 9.0, true, false)
@@ -536,35 +543,27 @@ func _build_person_frames(info: Dictionary) -> void:
 	sprite.position = Vector2(0.0, 124.0 - float(info["feet"]) * s)
 
 
-# Time each normal to its drawn swing: the move lasts as long as the animation
-# (played once at PERSON_ATK_FPS) and the hit lands at ~78% through -- i.e. when
-# the limb is extended -- with a short active window and the follow-through
-# frames covering recovery. Also gives the air kick a roomy, slightly lower
-# hitbox so a jump-in reliably connects with a grounded opponent.
+# Arcade timing: each normal lasts a fixed, SHORT duration (PERSON_ATK_DUR),
+# the hit comes out snappily mid-swing, and the drawn frames are played once
+# across the move so the swing still reads. Fast and committed, MK-style. Also
+# gives the air kick a roomy, downward-reaching hitbox so a jump-in connects.
 func _retune_person_attacks(info: Dictionary) -> void:
-	for atk in PERSON_ATK_FPS.keys():
-		var n := int(info[str(PERSON_ATK_ANIM[atk])])
-		var fps := float(PERSON_ATK_FPS[atk])
-		var total := maxi(6, int(round(float(n) / fps * 60.0)))
-		var startup: int
-		var active: int
-		if atk == "air":
-			# Airtime is short, so the kick must come out fast and stay out --
-			# otherwise you land before it connects.
-			startup = maxi(3, int(round(float(total) * 0.25)))
-			active = maxi(4, int(round(float(total) * 0.5)))
-		else:
-			# Ground normals land at ~78% -- when the drawn limb is extended.
-			startup = maxi(2, int(round(float(total) * 0.78)))
-			active = maxi(2, int(round(float(total) * 0.12)))
+	for atk in PERSON_ATK_DUR.keys():
+		var n := maxi(1, int(info[str(PERSON_ATK_ANIM[atk])]))
+		var dur := float(PERSON_ATK_DUR[atk])
+		var total := maxi(5, int(round(dur * 60.0)))
+		var startup := maxi(2, int(round(float(total) * float(PERSON_ATK_HIT[atk]))))
+		var active := maxi(2, int(round(float(total) * float(PERSON_ATK_ACTIVE[atk]))))
 		var recovery := maxi(2, total - startup - active)
 		var def: Dictionary = _attack_defs[atk]
 		def["startup"] = startup
 		def["active"] = active
 		def["recovery"] = recovery
-	# A grounded foe's hurtbox spans y -144..0. The old air box sat high (around
-	# head height), so a jump-in over the foe whiffed; make it tall and reaching
-	# down past the feet so a descending kick connects across a wide height band.
+		# Play the whole drawn swing once across the move so it stays readable.
+		if sprite != null and sprite.sprite_frames != null:
+			sprite.sprite_frames.set_animation_speed(str(def["animation"]), float(n) / dur)
+	# A grounded foe's hurtbox spans y -144..0. Tall, downward-reaching air box
+	# so a descending kick connects across a wide height band.
 	var air: Dictionary = _attack_defs["air"]
 	air["hitbox_offset"] = Vector2(76.0, -50.0)
 	air["hitbox_size"] = Vector2(128.0, 174.0)
