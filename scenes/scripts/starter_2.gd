@@ -31,7 +31,7 @@ const MENU_FONT: FontFile = preload("res://assets/fonts/NotoSansGeorgian-Black.t
 
 # Hit areas over the baked-in START / JOIN words (also used to place the focus box).
 const START_RECT := Rect2(317, 556, 160, 96)
-const JOIN_RECT := Rect2(750, 561, 120, 80)
+const JOIN_RECT := Rect2(773, 549, 125, 74)
 
 # High-level state of the lobby.
 enum Menu { CHOICES, CODE_ENTRY, WAIT, SELECT }
@@ -54,7 +54,6 @@ var _test_mode := false
 var _code_edit: LineEdit
 var _code_label: Label
 var _status_label: Label
-var _test_hint: Label
 var _menu_highlight: Panel
 var _menu_glow: ColorRect
 var _start_button: Button
@@ -174,7 +173,7 @@ func _enter_test_mode() -> void:
 	_opponent_display.texture = CHAR_TEXTURES[BALL_ORDER[_opp_chosen]]
 	_opponent_display.visible = true
 	_set_selection_enabled(true)
-	_set_status("TEST MODE — A / D to move, ENTER to pick. (Preview only, no real opponent.)")
+	_set_status("")
 
 
 # ── Ball selection ───────────────────────────────────────────────────────────
@@ -212,9 +211,8 @@ func _choose(index: int) -> void:
 	if _hosting_active or _connected_as_client:
 		_rpc_set_opponent_choice.rpc(index)
 	if _test_mode:
-		_set_status("TEST: you picked %s. (Preview only — no fight starts.)" % BALL_ORDER[index])
 		return
-	_set_status("You picked %s — waiting for both to choose..." % BALL_ORDER[index])
+	_set_status("Waiting for both to choose...")
 	_maybe_start()
 
 
@@ -318,12 +316,6 @@ func _build_ui() -> void:
 	_join_button.pressed.connect(_activate_join)
 	layer.add_child(_join_button)
 
-	_test_hint = _make_label("T — TEST SELECTION (no opponent needed)", 14, Color(1.0, 0.92, 0.55, 0.95))
-	_test_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_test_hint.position = Vector2(290, 662)
-	_test_hint.size = Vector2(700, 22)
-	layer.add_child(_test_hint)
-
 	_status_label = _make_label("", 15, Color(0.85, 0.92, 0.88, 1.0))
 	_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -337,7 +329,7 @@ func _show_choices() -> void:
 	_menu_index = 0
 	_apply_menu_visibility()
 	_update_menu_highlight()
-	_set_status("Press A / D to pick START or JOIN, ENTER to confirm.")
+	_set_status("")
 
 
 func _apply_menu_visibility() -> void:
@@ -348,8 +340,6 @@ func _apply_menu_visibility() -> void:
 		_menu_highlight.visible = in_choices
 	if _menu_glow != null:
 		_menu_glow.visible = in_choices
-	if _test_hint != null:
-		_test_hint.visible = in_choices
 	if _code_label != null:
 		_code_label.visible = entering_code or hosting_wait
 	if _code_edit != null:
@@ -506,7 +496,7 @@ func _on_peer_connected(peer_id: int) -> void:
 		_menu = Menu.SELECT
 		_apply_menu_visibility()
 		_code_label.text = "PLAYER 2 CONNECTED"
-		_set_status("Both players in — pick your fighter! (A / D, ENTER)")
+		_set_status("Both players in — pick your fighter!")
 		_set_selection_enabled(true)
 		_send_choice_to(peer_id)
 
@@ -529,7 +519,7 @@ func _on_connected_to_server() -> void:
 	_menu = Menu.SELECT
 	_apply_menu_visibility()
 	_code_label.text = "CONNECTED AS PLAYER 2"
-	_set_status("Both players in — pick your fighter! (A / D, ENTER)")
+	_set_status("Both players in — pick your fighter!")
 	_refresh_lobby_controls()
 	_set_selection_enabled(true)
 	_send_choice_to(1)
