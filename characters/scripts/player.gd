@@ -16,8 +16,9 @@ signal super_full(player_id: int)
 @export var opponent_path: NodePath
 ## Which sprite set / character this fighter uses. "placeholder" keeps the old
 ## stick-figure fighter with the full moveset; the hand-drawn people
-## ("english"/"georgian"/"scotish") only have walk + hand kick + leg kick, so
-## they use a simplified moveset (no jump/dash/slide/heavy/block).
+## ("english"/"georgian"/"scotish") have walk + jump + hand kick + leg kick +
+## hard hit (heavy), with triple-tap-L for the super. They still have no
+## crouch/dash/slide (no art); blocking is allowed (hold I, blue tint).
 @export var character_key := "placeholder"
 @export var bot_preferred_range := 145.0
 @export var bot_attack_range := 190.0
@@ -31,13 +32,16 @@ const NETWORK_SYNC_INTERVAL := 1.0 / 30.0
 const PERSON_WALK_DIR := "res://assets/walk/"
 const PERSON_HAND_DIR := "res://assets/hand kick/"
 const PERSON_LEG_DIR := "res://assets/leg kick/"
-# walk/hand/leg = frame counts; fig_h/feet = drawn-figure height and feet offset
-# below the 1000px canvas center (from frame 0) used to scale + ground the art.
+const PERSON_JUMP_DIR := "res://assets/jump/"
+const PERSON_HARD_DIR := "res://assets/hard hit/"
+# walk/hand/leg/hard = frame counts; jump = explicit (sparse) frame numbers;
+# fig_h/feet = drawn-figure height and feet offset below the 1000px canvas
+# center (from frame 0) used to scale + ground the art.
 const PERSON_TARGET_HEIGHT := 340.0
 const PERSON_SETS := {
-	"english":  {"base": "english man",  "walk": 12, "hand": 6, "leg": 8,  "fig_h": 905, "feet": 455},
-	"georgian": {"base": "georgian man", "walk": 12, "hand": 5, "leg": 10, "fig_h": 958, "feet": 466},
-	"scotish":  {"base": "scotish man",  "walk": 12, "hand": 6, "leg": 11, "fig_h": 922, "feet": 449},
+	"english":  {"base": "english man",  "walk": 12, "hand": 6, "leg": 8,  "hard": 16, "jump": [0, 6, 9],  "fig_h": 905, "feet": 455},
+	"georgian": {"base": "georgian man", "walk": 12, "hand": 5, "leg": 10, "hard": 27, "jump": [4, 14],    "fig_h": 958, "feet": 466},
+	"scotish":  {"base": "scotish man",  "walk": 12, "hand": 6, "leg": 11, "hard": 14, "jump": [0, 6, 17],  "fig_h": 922, "feet": 449},
 }
 
 const WALK_SPEED := 540.0
@@ -408,7 +412,7 @@ func _physics_process(delta: float) -> void:
 
 	if bot_enabled:
 		_update_bot_ai(delta)
-	else:
+	elif _has_local_input():
 		_read_local_inputs()
 
 	_update_facing()
@@ -488,14 +492,21 @@ func _build_person_frames(info: Dictionary) -> void:
 	var frames := SpriteFrames.new()
 	frames.remove_animation("default")
 
+	var hard_n := int(info["hard"])
+	# Heavy ("hard hit") plays once across the heavy move's ~0.72s; jump plays
+	# its sparse pose frames over the takeoff, then holds on the way down.
+	var hard_speed := maxf(float(hard_n) / 0.72, 12.0)
+
 	_add_person_anim(frames, "walk", PERSON_WALK_DIR, base, 0, walk_n - 1, 14.0, true, false)
 	_add_person_anim(frames, "walk_back", PERSON_WALK_DIR, base, 0, walk_n - 1, 14.0, true, true)
 	_add_person_anim(frames, "arm_attack", PERSON_HAND_DIR, base, 0, hand_n - 1, 18.0, false, false)
 	_add_person_anim(frames, "leg_attack", PERSON_LEG_DIR, base, 0, leg_n - 1, 16.0, false, false)
+	_add_person_anim(frames, "heavy_attack", PERSON_HARD_DIR, base, 0, hard_n - 1, hard_speed, false, false)
+	_add_person_anim_list(frames, "jump_start", PERSON_JUMP_DIR, base, info["jump"], 10.0, false, false)
 	_add_person_anim(frames, "idle", PERSON_WALK_DIR, base, 0, 0, 6.0, true, false)
-	for still in ["slide", "dash", "jump_start", "hit", "death"]:
+	for still in ["slide", "dash", "hit", "death"]:
 		_add_person_anim(frames, still, PERSON_WALK_DIR, base, 0, 0, 6.0, false, false)
-	for kick_alias in ["heavy_attack", "full_combo", "air_attack"]:
+	for kick_alias in ["full_combo", "air_attack"]:
 		_add_person_anim(frames, kick_alias, PERSON_LEG_DIR, base, 0, leg_n - 1, 16.0, false, false)
 
 	sprite.sprite_frames = frames
@@ -517,6 +528,19 @@ func _add_person_anim(frames: SpriteFrames, anim: String, dir: String, base: Str
 		seq = range(last, first - 1, -1)
 	for n in seq:
 		frames.add_frame(anim, load("%s%s%04d.png" % [dir, base, n]))
+
+
+# Like _add_person_anim but takes an explicit list of (possibly non-contiguous)
+# frame numbers -- the jump art only exists for a few sampled poses.
+func _add_person_anim_list(frames: SpriteFrames, anim: String, dir: String, base: String, frame_list: Array, speed: float, loops: bool, reverse: bool) -> void:
+	frames.add_animation(anim)
+	frames.set_animation_speed(anim, speed)
+	frames.set_animation_loop(anim, loops)
+	var seq := frame_list.duplicate()
+	if reverse:
+		seq.reverse()
+	for n in seq:
+		frames.add_frame(anim, load("%s%s%04d.png" % [dir, base, int(n)]))
 
 
 func _is_simple() -> bool:
@@ -604,7 +628,7 @@ func _process_jump(_delta: float) -> void:
 		_enter_state(FighterState.IDLE)
 		_play_anim("idle")
 	else:
-		_play_anim("idle")
+		_play_anim("jump_start")
 
 
 func _process_dash(delta: float) -> void:
@@ -1532,26 +1556,22 @@ func _read_local_inputs() -> void:
 		_move_dir -= 1
 	if Input.is_physical_key_pressed(KEY_D):
 		_move_dir += 1
-	# People (english/georgian/scotish) only walk + hand kick (J) + leg kick (K):
-	# no jump, crouch or heavy until those animations exist. Blocking IS allowed
-	# (hold I) — it shows as a blue tint rather than a dedicated block pose.
+	# People (english/georgian/scotish) walk + jump (W) + hand kick (J) +
+	# leg kick (K) + hard hit / heavy (L), and triple-tap L fires the super.
+	# They still have no crouch/dash/slide (no art); blocking IS allowed (hold I).
 	var simple := _is_simple()
 	_down_held = Input.is_physical_key_pressed(KEY_S) and not simple
 	if not _down_held:
 		_slide_lockout = false
 	_guard_held = Input.is_physical_key_pressed(GUARD_KEY)
-	_jump_pressed = _consume_just_pressed(KEY_W) and not simple
+	_jump_pressed = _consume_just_pressed(KEY_W)
 	_attack_requests.clear()
 	_special_requested = false
 
 	var light_pressed := _consume_just_pressed(KEY_J)
 	var medium_pressed := _consume_just_pressed(KEY_K)
 	var l_pressed := _consume_just_pressed(KEY_L)
-	var heavy_pressed := l_pressed and not simple
-	# The hand-drawn people have no heavy attack, so L is their dedicated
-	# SUPERPOWER button: a single press fires the special when it's charged.
-	if simple and l_pressed and is_special_ready():
-		_special_requested = true
+	var heavy_pressed := l_pressed
 	if light_pressed:
 		_record_combo_input("light")
 	if medium_pressed:
