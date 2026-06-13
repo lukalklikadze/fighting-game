@@ -53,6 +53,7 @@ var my_bvel   := Vector2.ZERO
 var my_kick       := 0.0    # remaining kick animation time
 var my_kick_right := true   # which leg is swinging
 var my_kick_hit   := false  # impulse already applied this swing
+var my_kick_count := 0
 var my_alive  := true
 var my_ramp_t := 0.0
 var my_speed  := 1.0    # kick velocity multiplier; grows over time
@@ -136,6 +137,7 @@ func _update(delta: float) -> void:
 		var foot_y := hip_y + LEG_LEN * 0.78 - p * 42.0
 		if absf(my_ball.x - foot_x) < BALL_R + 20.0 and absf(my_ball.y - foot_y) < BALL_R + 26.0:
 			my_kick_hit = true
+			my_kick_count += 1
 			var dir_x := (my_ball.x - my_x) * 1.3
 			var rnd_x := randf_range(-KICK_RAND_X, KICK_RAND_X)
 			my_bvel   = Vector2(dir_x + rnd_x, KICK_VEL_Y) * my_speed
@@ -195,6 +197,9 @@ func _draw() -> void:
 	_draw_pitch()
 	_draw_half(0.0,    my_x, my_lean, my_ball, my_kick, my_alive, true,  my_kick_right)
 	_draw_half(HALF_W, op_x, op_lean, op_ball, op_kick, op_alive, false, op_kick_right)
+	if game_on and winner == "":
+		_lbl_outlined(Vector2(38.0, 130.0), str(my_kick_count), Color.WHITE, 52)
+		_lbl(Vector2(38.0, 156.0), "kicks", Color(1, 1, 1, 0.7), 15)
 	if _countdown_text != "":
 		_lbl(Vector2(SW / 2.0, SH / 2.0), _countdown_text, Color.WHITE, 96)
 	elif winner != "":
