@@ -16,7 +16,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 config/name="2D Fighting Game"
 config/tags=PackedStringArray("multiplayer", "fighting", "2d")
-run/main_scene="res://scenes/SuperFightTest.tscn"
+run/main_scene="res://scenes/AnimTest.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 
 [autoload]

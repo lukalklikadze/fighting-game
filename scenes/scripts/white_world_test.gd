@@ -27,10 +27,10 @@ const CARD_SIZE := Vector2(200, 238)
 const ACCENT_GREEN := Color(0.32, 0.95, 0.46, 1.0)
 
 const CHARACTERS := [
-	{"id": "fighter_alpha", "name": "FIGHTER I", "icon": "res://assets/Fighter sprites/fighter_Idle_0001.png"},
-	{"id": "fighter_beta", "name": "FIGHTER II", "icon": "res://assets/Fighter sprites/fighter_Idle_0001.png"},
-	{"id": "fighter_gamma", "name": "FIGHTER III", "icon": "res://assets/Fighter sprites/fighter_Idle_0001.png"},
-	{"id": "random", "name": "RANDOM", "icon": ""},
+	{"id": "english", "key": "english", "name": "ENGLISHMAN", "icon": "res://assets/walk/english man0000.png"},
+	{"id": "georgian", "key": "georgian", "name": "GEORGIAN", "icon": "res://assets/walk/georgian man0000.png"},
+	{"id": "scotish", "key": "scotish", "name": "SCOTSMAN", "icon": "res://assets/walk/scotish man0000.png"},
+	{"id": "random", "key": "", "name": "RANDOM", "icon": ""},
 ]
 
 enum ScreenState {
@@ -380,7 +380,8 @@ func _add_character_card(index: int) -> void:
 		stack.add_child(question)
 	else:
 		var icon := TextureRect.new()
-		icon.texture = FIGHTER_ICON
+		var icon_path := str(CHARACTERS[index].get("icon", ""))
+		icon.texture = load(icon_path) if icon_path != "" else FIGHTER_ICON
 		icon.custom_minimum_size = Vector2(0, 150)
 		icon.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		icon.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -865,6 +866,7 @@ func _pick_random_fighter(taken: Array) -> int:
 func _apply_character_to_player(player: Node2D, character_index: int) -> void:
 	player.set_meta("character_id", str(CHARACTERS[character_index]["id"]))
 	player.set_meta("character_name", str(CHARACTERS[character_index]["name"]))
+	player.call("set_character", str(CHARACTERS[character_index].get("key", "placeholder")))
 
 
 func _return_to_selection_after_match(message: String) -> void:

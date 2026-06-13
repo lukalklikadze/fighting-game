@@ -14,12 +14,31 @@ signal super_full(player_id: int)
 @export var bot_enabled := false
 @export var max_health := 100
 @export var opponent_path: NodePath
+## Which sprite set / character this fighter uses. "placeholder" keeps the old
+## stick-figure fighter with the full moveset; the hand-drawn people
+## ("english"/"georgian"/"scotish") only have walk + hand kick + leg kick, so
+## they use a simplified moveset (no jump/dash/slide/heavy/block).
+@export var character_key := "placeholder"
 @export var bot_preferred_range := 145.0
 @export var bot_attack_range := 190.0
 
 const SPRITE_DIR := "res://assets/Fighter sprites/"
 const FRAME_TIME := 1.0 / 60.0
 const NETWORK_SYNC_INTERVAL := 1.0 / 30.0
+
+# Hand-drawn "people" characters. Each has only walk / hand kick / leg kick.
+# Value = filename base + frame count per animation folder.
+const PERSON_WALK_DIR := "res://assets/walk/"
+const PERSON_HAND_DIR := "res://assets/hand kick/"
+const PERSON_LEG_DIR := "res://assets/leg kick/"
+# walk/hand/leg = frame counts; fig_h/feet = drawn-figure height and feet offset
+# below the 1000px canvas center (from frame 0) used to scale + ground the art.
+const PERSON_TARGET_HEIGHT := 240.0
+const PERSON_SETS := {
+	"english":  {"base": "english man",  "walk": 12, "hand": 6, "leg": 8,  "fig_h": 905, "feet": 455},
+	"georgian": {"base": "georgian man", "walk": 12, "hand": 5, "leg": 10, "fig_h": 958, "feet": 466},
+	"scotish":  {"base": "scotish man",  "walk": 12, "hand": 6, "leg": 11, "fig_h": 922, "feet": 449},
+}
 
 const WALK_SPEED := 540.0
 const BACKWARD_SPEED := 380.0
@@ -156,7 +175,7 @@ var _attack_defs := {
 	},
 	"medium": {
 		"animation": "leg_attack",
-		"damage": 5,
+		"damage": 3,
 		"chip_damage": 1,
 		"guard_damage": 22.0,
 		"startup": 7,
@@ -367,10 +386,20 @@ func _physics_process(delta: float) -> void:
 
 
 func _build_sprite_frames() -> void:
+	if PERSON_SETS.has(character_key):
+		_build_person_frames(PERSON_SETS[character_key])
+	else:
+		_build_placeholder_frames()
+
+
+func _build_placeholder_frames() -> void:
+	sprite.scale = Vector2.ONE
+	sprite.position = Vector2.ZERO
 	var frames := SpriteFrames.new()
 	frames.remove_animation("default")
 	_add_numbered_animation(frames, "idle", "fighter_Idle_", 1, 8, 12.0, true)
 	_add_numbered_animation(frames, "walk", "fighter_walk_", 9, 16, 22.0, true)
+	_add_numbered_animation(frames, "walk_back", "fighter_walk_", 9, 16, 22.0, true, true)
 	_add_numbered_animation(frames, "slide", "fighter_slide_", 25, 32, 28.0, false)
 	_add_numbered_animation(frames, "dash", "fighter_dash_", 33, 38, 32.0, false)
 	_add_numbered_animation(frames, "jump_start", "fighter_jump_", 43, 47, 34.0, false)
@@ -383,11 +412,69 @@ func _build_sprite_frames() -> void:
 	sprite.sprite_frames = frames
 
 
-func _add_numbered_animation(frames: SpriteFrames, animation_name: String, prefix: String, first_frame: int, last_frame: int, speed: float, loops: bool) -> void:
+# A hand-drawn person only has walk / hand kick / leg kick, so every animation
+# the state machine might play is mapped onto those: idle = first walk frame,
+# backward walk = walk reversed, hand kick = light (J), leg kick = medium (K)
+# and the air/heavy/combo fallbacks, hit/death = a still frame.
+func _build_person_frames(info: Dictionary) -> void:
+	var base := str(info["base"])
+	var walk_n := int(info["walk"])
+	var hand_n := int(info["hand"])
+	var leg_n := int(info["leg"])
+	var frames := SpriteFrames.new()
+	frames.remove_animation("default")
+
+	_add_person_anim(frames, "walk", PERSON_WALK_DIR, base, 0, walk_n - 1, 14.0, true, false)
+	_add_person_anim(frames, "walk_back", PERSON_WALK_DIR, base, 0, walk_n - 1, 14.0, true, true)
+	_add_person_anim(frames, "arm_attack", PERSON_HAND_DIR, base, 0, hand_n - 1, 18.0, false, false)
+	_add_person_anim(frames, "leg_attack", PERSON_LEG_DIR, base, 0, leg_n - 1, 16.0, false, false)
+	_add_person_anim(frames, "idle", PERSON_WALK_DIR, base, 0, 0, 6.0, true, false)
+	for still in ["slide", "dash", "jump_start", "hit", "death"]:
+		_add_person_anim(frames, still, PERSON_WALK_DIR, base, 0, 0, 6.0, false, false)
+	for kick_alias in ["heavy_attack", "full_combo", "air_attack"]:
+		_add_person_anim(frames, kick_alias, PERSON_LEG_DIR, base, 0, leg_n - 1, 16.0, false, false)
+
+	sprite.sprite_frames = frames
+
+	# The hand-drawn art is 1000px tall; scale it to fighter size and drop the
+	# feet onto the same ground line the placeholder uses. (facing uses flip_h,
+	# so it's safe to drive sprite.scale here.)
+	var s := PERSON_TARGET_HEIGHT / float(info["fig_h"])
+	sprite.scale = Vector2(s, s)
+	sprite.position = Vector2(0.0, 124.0 - float(info["feet"]) * s)
+
+
+func _add_person_anim(frames: SpriteFrames, anim: String, dir: String, base: String, first: int, last: int, speed: float, loops: bool, reverse: bool) -> void:
+	frames.add_animation(anim)
+	frames.set_animation_speed(anim, speed)
+	frames.set_animation_loop(anim, loops)
+	var seq := range(first, last + 1)
+	if reverse:
+		seq = range(last, first - 1, -1)
+	for n in seq:
+		frames.add_frame(anim, load("%s%s%04d.png" % [dir, base, n]))
+
+
+func _is_simple() -> bool:
+	return PERSON_SETS.has(character_key)
+
+
+# Swap the character at runtime (used by the character-select flow).
+func set_character(key: String) -> void:
+	character_key = key
+	if sprite != null:
+		_build_sprite_frames()
+		_play_anim("idle", true)
+
+
+func _add_numbered_animation(frames: SpriteFrames, animation_name: String, prefix: String, first_frame: int, last_frame: int, speed: float, loops: bool, reverse := false) -> void:
 	frames.add_animation(animation_name)
 	frames.set_animation_speed(animation_name, speed)
 	frames.set_animation_loop(animation_name, loops)
-	for frame_number in range(first_frame, last_frame + 1):
+	var seq := range(first_frame, last_frame + 1)
+	if reverse:
+		seq = range(last_frame, first_frame - 1, -1)
+	for frame_number in seq:
 		frames.add_frame(animation_name, load("%s%s%04d.png" % [SPRITE_DIR, prefix, frame_number]))
 
 
@@ -434,8 +521,8 @@ func _process_neutral(_delta: float) -> void:
 		_enter_state(FighterState.WALK)
 		_play_anim("walk")
 	else:
-		_enter_state(FighterState.IDLE)
-		_play_anim("idle")
+		_enter_state(FighterState.WALK)
+		_play_anim("walk_back")   # backward walk = walk animation in reverse
 
 
 func _process_jump(_delta: float) -> void:
@@ -636,7 +723,7 @@ func _finish_attack() -> void:
 
 
 func _try_start_dash() -> bool:
-	if bot_enabled or _dash_cooldown > 0.0 or not _is_forward_input(_move_dir):
+	if _is_simple() or bot_enabled or _dash_cooldown > 0.0 or not _is_forward_input(_move_dir):
 		return false
 	var tapped_forward := (_right_pressed and facing_dir > 0) or (_left_pressed and facing_dir < 0)
 	if not tapped_forward:
@@ -666,7 +753,7 @@ func _start_dash() -> void:
 
 
 func _try_start_slide() -> bool:
-	if bot_enabled or _slide_cooldown > 0.0 or _slide_lockout:
+	if _is_simple() or bot_enabled or _slide_cooldown > 0.0 or _slide_lockout:
 		return false
 	if not is_on_floor() or not _down_held or _move_dir == 0:
 		return false
@@ -1205,16 +1292,19 @@ func _read_local_inputs() -> void:
 		_move_dir -= 1
 	if Input.is_physical_key_pressed(KEY_D):
 		_move_dir += 1
-	_down_held = Input.is_physical_key_pressed(KEY_S)
+	# People (english/georgian/scotish) only walk + hand kick (J) + leg kick (K):
+	# no jump, crouch, block or heavy until those animations exist.
+	var simple := _is_simple()
+	_down_held = Input.is_physical_key_pressed(KEY_S) and not simple
 	if not _down_held:
 		_slide_lockout = false
-	_guard_held = Input.is_physical_key_pressed(GUARD_KEY)
-	_jump_pressed = _consume_just_pressed(KEY_W)
+	_guard_held = Input.is_physical_key_pressed(GUARD_KEY) and not simple
+	_jump_pressed = _consume_just_pressed(KEY_W) and not simple
 	_attack_requests.clear()
 
 	var light_pressed := _consume_just_pressed(KEY_J)
 	var medium_pressed := _consume_just_pressed(KEY_K)
-	var heavy_pressed := _consume_just_pressed(KEY_L)
+	var heavy_pressed := _consume_just_pressed(KEY_L) and not simple
 	if light_pressed:
 		_record_combo_input("light")
 	if medium_pressed:
@@ -1312,13 +1402,23 @@ func _update_bot_ai(delta: float) -> void:
 		_:
 			pass
 
-	if int(opponent.get("state")) == FighterState.ATTACK and abs_distance <= bot_attack_range and guard_meter >= GUARD_MIN_TO_BLOCK and _bot_rng.randf() < 0.45:
+	if not _is_simple() and int(opponent.get("state")) == FighterState.ATTACK and abs_distance <= bot_attack_range and guard_meter >= GUARD_MIN_TO_BLOCK and _bot_rng.randf() < 0.45:
 		_attack_requests.clear()
 		_guard_held = true
 		_move_dir = 0
 
 
 func _choose_bot_mode(abs_distance: float) -> void:
+	# People only walk + kick: keep their bot to approach / retreat / poke.
+	if _is_simple():
+		var r := _bot_rng.randf()
+		if abs_distance > bot_attack_range * 0.9:
+			_bot_mode = "approach" if r < 0.82 else "retreat"
+		else:
+			_bot_mode = "poke" if r < 0.72 else "retreat"
+		_bot_mode_timer = _bot_rng.randf_range(0.18, 0.62)
+		return
+
 	var roll := _bot_rng.randf()
 	if abs_distance < bot_preferred_range:
 		if roll < 0.24:
