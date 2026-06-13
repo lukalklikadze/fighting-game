@@ -29,8 +29,8 @@ const KICK_RANGE_X := 68.0     # max horizontal distance player–ball for kick 
 const KICK_RANGE_Y := 95.0     # max height above ground for kick to connect
 
 # ─── Speed ramp ───────────────────────────────────────────────────────────────
-const RAMP_INTERVAL := 5.0     # seconds between speed increases
-const RAMP_FACTOR   := 1.08    # multiplier per interval
+const RAMP_PER_SEC  := 0.034   # kick multiplier gained per second (1.0 → 2.8 in ~53 s)
+const BVEL_PER_SEC  := 0.006   # fractional in-air speed gain per second
 
 # ─── Stick figure ─────────────────────────────────────────────────────────────
 const HEAD_R    := 15.0
@@ -157,13 +157,11 @@ func _update(delta: float) -> void:
 		if not solo: _net_lost.rpc()
 		return
 
-	# ── Speed ramp ───────────────────────────────────────────────────────────
+	# ── Continuous speed ramp ────────────────────────────────────────────────
 	my_ramp_t += delta
-	if my_ramp_t >= RAMP_INTERVAL:
-		my_ramp_t = 0.0
-		my_speed  = min(my_speed * RAMP_FACTOR, 2.8)
-		if my_bvel.length() < MAX_BSPEED:
-			my_bvel *= 1.05   # gradually speed up ball in air too
+	my_speed   = minf(1.0 + my_ramp_t * RAMP_PER_SEC, 2.8)
+	if my_bvel.length() < MAX_BSPEED:
+		my_bvel *= 1.0 + BVEL_PER_SEC * delta
 
 # ══════════════════════════════════ INPUT ══════════════════════════════════════
 func _input(event: InputEvent) -> void:
