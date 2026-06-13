@@ -44,7 +44,7 @@ const PERSON_TARGET_HEIGHT := 340.0
 const PERSON_SETS := {
 	"english":  {"base": "english man",  "walk": 12, "idle": 12, "hand": 6, "leg": 8,  "hard": 16, "jump": [0, 6, 9],  "dash": 4, "fig_h": 905, "feet": 455},
 	"georgian": {"base": "georgian man", "walk": 12, "idle": 12, "hand": 5, "leg": 10, "hard": 27, "jump": [4, 14],    "dash": 9, "fig_h": 958, "feet": 466},
-	"scotish":  {"base": "scotish man",  "walk": 12, "idle": 12, "hand": 6, "leg": 11, "hard": 14, "jump": [0, 6, 17],  "dash": 7, "fig_h": 922, "feet": 449, "pipe": true},
+	"scotish":  {"base": "scotish man",  "walk": 12, "idle": 12, "hand": 6, "leg": 10, "hard": 14, "jump": [0, 6, 17],  "dash": 9, "fig_h": 922, "feet": 449, "pipe": true},
 }
 
 # Hand-drawn attacks are timed FROM their art: each plays once across the whole
