@@ -4,7 +4,7 @@
 [ext_resource type="PackedScene" path="res://characters/scenes/Player.tscn" id="2_player"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_ground"]
-size = Vector2(1240, 60)
+size = Vector2(200000, 60)
 
 [sub_resource type="WorldBoundaryShape2D" id="WorldBoundaryShape2D_ceiling"]
 normal = Vector2(0, 1)
@@ -17,7 +17,7 @@ script = ExtResource("1_world")
 
 [node name="GroundVisual" type="Polygon2D" parent="ArenaVisuals" unique_id=1880785985]
 color = Color(0, 0, 0, 1)
-polygon = PackedVector2Array(-620, 232, 620, 232, 620, 240, -620, 240)
+polygon = PackedVector2Array(-100000, 232, 100000, 232, 100000, 240, -100000, 240)
 
 [node name="WorldCollision" type="StaticBody2D" parent="." unique_id=104717477]
 

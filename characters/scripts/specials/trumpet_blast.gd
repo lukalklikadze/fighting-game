@@ -7,6 +7,7 @@ class_name TrumpetBlast
 
 const RANGE := 250.0                  # only blows opponents within this distance
 const HIT_PAYLOAD := "special_trumpet"
+const KNOCKBACK_DELAY := 0.22         # let the wind gust visibly sweep across first
 
 func id() -> String:
 	return "trumpet"
@@ -18,10 +19,10 @@ func cooldown() -> float:
 	return 15.0
 
 func windup_frames() -> int:
-	return 16                          # raise the trumpet, then blow
+	return 20                          # punch wind-up (pipe animation comes later)
 
 func total_frames() -> int:
-	return 40
+	return 44
 
 func user_animation() -> String:
 	return "arm_attack"
@@ -44,4 +45,5 @@ func cast(user, authoritative: bool, origin: Vector2, dir: int) -> void:
 		return                          # opponent is behind — the gust misses
 	if absf(to_target) > RANGE:
 		return
-	user.deal_special_hit(target, HIT_PAYLOAD)
+	# Knock back only after the gust has had time to travel across.
+	user.deal_special_hit_after(target, HIT_PAYLOAD, KNOCKBACK_DELAY)

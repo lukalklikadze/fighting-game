@@ -16,13 +16,13 @@ func cooldown() -> float:
 	return 15.0
 
 func windup_frames() -> int:
-	return 11
+	return 20                          # let the punch animation play first
 
 func total_frames() -> int:
-	return 30
+	return 38
 
 func user_animation() -> String:
-	return "heavy_attack"
+	return "arm_attack"                # regular J punch as the wind-up
 
 
 func cast(user, authoritative: bool, origin: Vector2, dir: int) -> void:

@@ -346,8 +346,8 @@ var _attack_defs := {
 # pipeline as ordinary attacks.
 var _special_hit_defs := {
 	"special_yantsi": {
-		"damage": 14,
-		"chip_damage": 3,
+		"damage": 12,
+		"chip_damage": 2,
 		"guard_damage": 30.0,
 		"hit_knockback": 430.0,
 		"block_knockback": 360.0,
@@ -357,7 +357,7 @@ var _special_hit_defs := {
 		"hitstop": 8,
 	},
 	"special_trumpet": {
-		"damage": 8,
+		"damage": 12,
 		"chip_damage": 2,
 		"guard_damage": 26.0,
 		"hit_knockback": 760.0,
@@ -370,8 +370,8 @@ var _special_hit_defs := {
 	"special_beer": {
 		# A repeating hazard tick (the puddle damages while you stand in it), so
 		# per-hit values are modest; the anti-spam proration tapers repeats.
-		"damage": 9,
-		"chip_damage": 2,
+		"damage": 6,
+		"chip_damage": 1,
 		"guard_damage": 20.0,
 		"hit_knockback": 200.0,
 		"block_knockback": 180.0,
@@ -904,6 +904,17 @@ func deal_special_hit(target, attack_name: String) -> void:
 	if _try_send_network_hit(target, data, attack_name):
 		return
 	target.receive_hit(int(data["damage"]), self, float(data["hit_knockback"]), attack_name)
+
+
+# Like deal_special_hit but waits `delay` seconds first — lets a telegraph
+# (e.g. the Scottish wind gust sweeping across) play before the hit lands.
+func deal_special_hit_after(target, attack_name: String, delay: float) -> void:
+	if delay <= 0.0:
+		deal_special_hit(target, attack_name)
+		return
+	await get_tree().create_timer(delay).timeout
+	if target != null and is_instance_valid(target):
+		deal_special_hit(target, attack_name)
 
 
 # ── HUD helpers ──────────────────────────────────────────────────────────────
@@ -1519,7 +1530,12 @@ func _read_local_inputs() -> void:
 
 	var light_pressed := _consume_just_pressed(KEY_J)
 	var medium_pressed := _consume_just_pressed(KEY_K)
-	var heavy_pressed := _consume_just_pressed(KEY_L) and not simple
+	var l_pressed := _consume_just_pressed(KEY_L)
+	var heavy_pressed := l_pressed and not simple
+	# The hand-drawn people have no heavy attack, so L is their dedicated
+	# SUPERPOWER button: a single press fires the special when it's charged.
+	if simple and l_pressed and is_special_ready():
+		_special_requested = true
 	if light_pressed:
 		_record_combo_input("light")
 	if medium_pressed:
