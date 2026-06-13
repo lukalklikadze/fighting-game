@@ -27,7 +27,10 @@ const GRAVITY := 2850.0
 const MAX_FALL_SPEED := 1650.0
 const DASH_SPEED := 1260.0
 const DASH_FRAMES := 8
-const DASH_COOLDOWN := 0.30
+const DASH_COOLDOWN := 0.42
+const SLIDE_SPEED := 1040.0
+const SLIDE_FRAMES := 12
+const SLIDE_COOLDOWN := 0.55
 const DOUBLE_TAP_TIME := 0.22
 const GUARD_KEY := KEY_I
 const GUARD_MAX := 100.0
@@ -43,6 +46,7 @@ const SPAM_WINDOW_SIZE := 6
 const SPAM_DAMAGE_SCALES := [1.0, 0.82, 0.65, 0.48, 0.36, 0.28]
 const SPAM_HITSTUN_FRAME_PENALTIES := [0, 2, 5, 8, 12, 16]
 const SPAM_WINDOW_TIME := 1.05
+const FULL_COMBO_INPUT_WINDOW := 0.85
 
 enum FighterState {
 	IDLE,
@@ -50,6 +54,7 @@ enum FighterState {
 	CROUCH,
 	JUMP,
 	DASH,
+	SLIDE,
 	ATTACK,
 	BLOCK,
 	BLOCKSTUN,
@@ -74,20 +79,28 @@ var _frame_accum := 0.0
 var _state_timer := 0.0
 var _hitstop_timer := 0.0
 var _dash_cooldown := 0.0
+var _slide_cooldown := 0.0
 var _guard_regen_delay := 0.0
 var _last_left_tap := -10.0
 var _last_right_tap := -10.0
+var _dash_dir := 1
+var _slide_dir := 1
+var _slide_lockout := false
 
 var _active_attack := ""
 var _queued_attack := ""
 var _attack_landed := false
 var _attack_blocked := false
 var _hit_targets := {}
+var _combo_input_buffer: Array[Dictionary] = []
 
 var _move_dir := 0
 var _down_held := false
+var _down_pressed := false
 var _guard_held := false
 var _jump_pressed := false
+var _left_pressed := false
+var _right_pressed := false
 var _attack_requests: Array[String] = []
 var _key_down := {}
 var _just_pressed := {}
@@ -175,6 +188,80 @@ var _attack_defs := {
 		"move_active": 0.22,
 		"move_recovery": 0.08,
 	},
+	"full_combo": {
+		"animation": "full_combo",
+		"damage": 8,
+		"chip_damage": 1,
+		"guard_damage": 16.0,
+		"startup": 4,
+		"active": 32,
+		"recovery": 16,
+		"hitstun": 18,
+		"blockstun": 11,
+		"hitstop": 5,
+		"hit_knockback": 300.0,
+		"block_knockback": 350.0,
+		"self_block_recoil": 410.0,
+		"cancel_frame": 999,
+		"chains": [],
+		"frames": [64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82],
+		"anim_speed": 25.0,
+		"hitbox_offset": Vector2(86.0, -82.0),
+		"hitbox_size": Vector2(104.0, 70.0),
+		"move_startup": 0.86,
+		"move_active": 0.34,
+		"move_recovery": 0.10,
+		"hit_segments": [
+			{
+				"hit_id": "arm",
+				"start": 4,
+				"end": 9,
+				"damage": 5,
+				"chip_damage": 1,
+				"guard_damage": 12.0,
+				"hitstun": 13,
+				"blockstun": 9,
+				"hitstop": 4,
+				"hit_knockback": 250.0,
+				"block_knockback": 300.0,
+				"self_block_recoil": 340.0,
+				"hitbox_offset": Vector2(76.0, -86.0),
+				"hitbox_size": Vector2(88.0, 62.0),
+			},
+			{
+				"hit_id": "leg",
+				"start": 13,
+				"end": 19,
+				"damage": 7,
+				"chip_damage": 1,
+				"guard_damage": 18.0,
+				"hitstun": 17,
+				"blockstun": 11,
+				"hitstop": 5,
+				"hit_knockback": 340.0,
+				"block_knockback": 390.0,
+				"self_block_recoil": 460.0,
+				"hitbox_offset": Vector2(92.0, -76.0),
+				"hitbox_size": Vector2(112.0, 58.0),
+			},
+			{
+				"hit_id": "heavy_leg",
+				"start": 25,
+				"end": 34,
+				"damage": 13,
+				"chip_damage": 2,
+				"guard_damage": 34.0,
+				"hitstun": 28,
+				"blockstun": 16,
+				"hitstop": 8,
+				"hit_knockback": 560.0,
+				"block_knockback": 620.0,
+				"self_block_recoil": 720.0,
+				"hitbox_offset": Vector2(108.0, -82.0),
+				"hitbox_size": Vector2(132.0, 82.0),
+			},
+		],
+	},
 	"air": {
 		"animation": "air_attack",
 		"damage": 9,
@@ -249,6 +336,8 @@ func _physics_process(delta: float) -> void:
 			_process_jump(delta)
 		FighterState.DASH:
 			_process_dash(delta)
+		FighterState.SLIDE:
+			_process_slide(delta)
 		FighterState.ATTACK:
 			_process_attack(delta)
 		FighterState.BLOCK:
@@ -268,11 +357,12 @@ func _build_sprite_frames() -> void:
 	frames.remove_animation("default")
 	_add_numbered_animation(frames, "idle", "fighter_Idle_", 1, 8, 12.0, true)
 	_add_numbered_animation(frames, "walk", "fighter_walk_", 9, 16, 22.0, true)
+	_add_numbered_animation(frames, "slide", "fighter_slide_", 25, 32, 28.0, false)
 	_add_numbered_animation(frames, "dash", "fighter_dash_", 33, 38, 32.0, false)
 	_add_numbered_animation(frames, "jump_start", "fighter_jump_", 43, 47, 34.0, false)
 	_add_numbered_animation(frames, "hit", "fighter_hit_", 48, 51, 22.0, false)
 	_add_numbered_animation(frames, "death", "fighter_death_", 52, 61, 18.0, false)
-	for attack_name in ["light", "medium", "heavy"]:
+	for attack_name in ["light", "medium", "heavy", "full_combo"]:
 		var data: Dictionary = _attack_defs[attack_name]
 		_add_combo_animation(frames, data["animation"], data["frames"], float(data["anim_speed"]))
 	_add_numbered_animation(frames, "air_attack", "fighter_air_attack_", 62, 63, float(_attack_defs["air"]["anim_speed"]), false)
@@ -307,6 +397,9 @@ func _process_neutral(_delta: float) -> void:
 		velocity.y = JUMP_VELOCITY
 		_enter_state(FighterState.JUMP)
 		_play_anim("jump_start", true)
+		return
+
+	if is_on_floor() and _try_start_slide():
 		return
 
 	if is_on_floor() and _try_start_dash():
@@ -348,11 +441,24 @@ func _process_jump(_delta: float) -> void:
 
 func _process_dash(delta: float) -> void:
 	_advance_state_frames(delta)
-	velocity.x = float(facing_dir) * DASH_SPEED
+	velocity.x = float(_dash_dir) * DASH_SPEED
 	if _state_frame >= DASH_FRAMES:
 		velocity.x = 0.0
 		_enter_state(FighterState.IDLE)
 		_play_anim("idle")
+
+
+func _process_slide(delta: float) -> void:
+	_advance_state_frames(delta)
+	velocity.x = float(_slide_dir) * SLIDE_SPEED
+	if _state_frame >= SLIDE_FRAMES:
+		velocity.x = 0.0
+		if _down_held:
+			_enter_state(FighterState.CROUCH)
+			_play_anim("idle")
+		else:
+			_enter_state(FighterState.IDLE)
+			_play_anim("idle")
 
 
 func _process_attack(delta: float) -> void:
@@ -412,6 +518,7 @@ func _advance_state_frames(delta: float) -> void:
 
 func _update_global_timers(delta: float) -> void:
 	_dash_cooldown = maxf(_dash_cooldown - delta, 0.0)
+	_slide_cooldown = maxf(_slide_cooldown - delta, 0.0)
 	_repeat_hit_timer = maxf(_repeat_hit_timer - delta, 0.0)
 	if _repeat_hit_timer <= 0.0:
 		_recent_received_attacks.clear()
@@ -434,9 +541,15 @@ func _try_start_attack_from_input() -> bool:
 
 
 func _try_queue_attack() -> void:
-	if _attack_requests.is_empty() or _queued_attack != "":
+	if _attack_requests.is_empty():
 		return
 	var requested := _attack_requests[0]
+	if requested == "full_combo":
+		if _active_attack == "light" or _active_attack == "medium":
+			_start_full_combo_continuation(_active_attack, _state_frame)
+		return
+	if _queued_attack != "":
+		return
 	if _can_cancel_into(requested):
 		_queued_attack = requested
 
@@ -447,6 +560,8 @@ func _can_cancel_into(attack_name: String) -> bool:
 	var data := _attack_data()
 	if _state_frame < int(data["cancel_frame"]):
 		return false
+	if attack_name == "full_combo":
+		return _active_attack == "light" or _active_attack == "medium"
 	var chains: Array = data["chains"]
 	if not (_attack_landed or _attack_blocked):
 		return false
@@ -469,6 +584,30 @@ func _start_attack(attack_name: String) -> void:
 	attack_started.emit(attack_name)
 
 
+func _start_full_combo_continuation(previous_attack: String, previous_state_frame: int) -> void:
+	_start_attack("full_combo")
+	if previous_attack == "light" and previous_state_frame >= 2:
+		_seek_attack_to_frame(9, 5)
+	elif previous_attack == "medium" and previous_state_frame >= 3:
+		_seek_attack_to_frame(19, 11)
+
+
+func _seek_attack_to_frame(attack_frame: int, visual_frame: int) -> void:
+	_state_frame = attack_frame
+	_frame_accum = 0.0
+	if sprite.sprite_frames == null or _active_attack == "" or not _attack_defs.has(_active_attack):
+		return
+	var data := _attack_data()
+	var animation_name := str(data["animation"])
+	if not sprite.sprite_frames.has_animation(animation_name):
+		return
+	var frame_count := sprite.sprite_frames.get_frame_count(animation_name)
+	if frame_count > 0:
+		sprite.frame = clampi(visual_frame, 0, frame_count - 1)
+	_update_attack_hitbox_shape()
+	_update_attack_hitbox_for_frame()
+
+
 func _finish_attack() -> void:
 	_set_attack_hitbox_active(false)
 	_active_attack = ""
@@ -484,6 +623,9 @@ func _finish_attack() -> void:
 
 func _try_start_dash() -> bool:
 	if bot_enabled or _dash_cooldown > 0.0 or not _is_forward_input(_move_dir):
+		return false
+	var tapped_forward := (_right_pressed and facing_dir > 0) or (_left_pressed and facing_dir < 0)
+	if not tapped_forward:
 		return false
 
 	var now := Time.get_ticks_msec() / 1000.0
@@ -502,10 +644,34 @@ func _try_start_dash() -> bool:
 
 func _start_dash() -> void:
 	_dash_cooldown = DASH_COOLDOWN
+	_dash_dir = facing_dir
 	_last_left_tap = -10.0
 	_last_right_tap = -10.0
 	_enter_state(FighterState.DASH)
 	_play_anim("dash", true)
+
+
+func _try_start_slide() -> bool:
+	if bot_enabled or _slide_cooldown > 0.0 or _slide_lockout:
+		return false
+	if not is_on_floor() or not _down_held or _move_dir == 0:
+		return false
+	var pressed_slide_chord := _down_pressed or (_down_held and (_left_pressed or _right_pressed))
+	if not pressed_slide_chord:
+		return false
+	_start_slide(_move_dir)
+	return true
+
+
+func _start_slide(direction: int) -> void:
+	_slide_cooldown = SLIDE_COOLDOWN
+	_slide_lockout = true
+	_slide_dir = int(sign(direction))
+	if _slide_dir == 0:
+		_slide_dir = facing_dir
+	facing_dir = _slide_dir
+	_enter_state(FighterState.SLIDE)
+	_play_anim("slide", true)
 
 
 func receive_hit(amount: int, attacker: Node2D, knockback: float = 260.0, attack_name := "") -> Dictionary:
@@ -690,10 +856,13 @@ func reset_fighter(start_position: Vector2, reset_health := true) -> void:
 	guard_meter = GUARD_MAX
 	_guard_regen_delay = 0.0
 	_dash_cooldown = 0.0
+	_slide_cooldown = 0.0
+	_slide_lockout = false
 	_hitstop_timer = 0.0
 	_active_attack = ""
 	_queued_attack = ""
 	_hit_targets.clear()
+	_combo_input_buffer.clear()
 	_recent_received_attacks.clear()
 	_last_received_attacker_id = 0
 	_repeat_hit_timer = 0.0
@@ -810,9 +979,14 @@ func _apply_remote_sprite(animation_name: String, frame_index: int, playing: boo
 
 
 func get_attack_payload(attack_name: String) -> Dictionary:
-	if not _attack_defs.has(attack_name):
+	var base_attack_name := attack_name
+	if attack_name.contains(":"):
+		base_attack_name = attack_name.split(":")[0]
+	if _active_attack == base_attack_name:
+		return _current_attack_hit_data()
+	if not _attack_defs.has(base_attack_name):
 		return {}
-	return _attack_defs[attack_name].duplicate(true)
+	return _attack_defs[base_attack_name].duplicate(true)
 
 
 func _on_attack_hitbox_area_entered(area: Area2D) -> void:
@@ -831,23 +1005,25 @@ func _try_hit_area(area: Area2D) -> void:
 	if target == null or target == self:
 		return
 	var target_id := target.get_instance_id()
-	if _hit_targets.has(target_id):
+	var hit_id := _current_attack_hit_id()
+	var hit_key := "%s:%s" % [target_id, hit_id]
+	if _hit_targets.has(hit_key):
 		return
-	_hit_targets[target_id] = true
+	_hit_targets[hit_key] = true
 
-	var data := _attack_data()
-	if _try_send_network_hit(target, data):
+	var data := _current_attack_hit_data()
+	if _try_send_network_hit(target, data, hit_id):
 		_attack_landed = true
 		return
 
 	if target.has_method("receive_hit"):
-		var result = target.receive_hit(int(data["damage"]), self, float(data["hit_knockback"]), _active_attack)
+		var result = target.receive_hit(int(data["damage"]), self, float(data["hit_knockback"]), hit_id)
 		if result is Dictionary and bool(result.get("connected", false)):
 			_attack_landed = not bool(result.get("blocked", false))
 			_attack_blocked = bool(result.get("blocked", false))
 
 
-func _try_send_network_hit(target: Node, data: Dictionary) -> bool:
+func _try_send_network_hit(target: Node, data: Dictionary, attack_hit_id: String) -> bool:
 	if not multiplayer.has_multiplayer_peer():
 		return false
 	if not target.has_method("_is_remote_network_player") or not bool(target.call("_is_remote_network_player")):
@@ -855,7 +1031,7 @@ func _try_send_network_hit(target: Node, data: Dictionary) -> bool:
 	var target_peer_id := target.get_multiplayer_authority()
 	if target_peer_id <= 0 or target_peer_id == multiplayer.get_unique_id():
 		return false
-	target.rpc_id(target_peer_id, "_rpc_receive_hit_from_peer", int(data["damage"]), player_id, float(data["hit_knockback"]), _active_attack)
+	target.rpc_id(target_peer_id, "_rpc_receive_hit_from_peer", int(data["damage"]), player_id, float(data["hit_knockback"]), attack_hit_id)
 	return true
 
 
@@ -890,7 +1066,7 @@ func _find_fighter_from_area(area: Area2D) -> Node:
 
 
 func _update_attack_hitbox_for_frame() -> void:
-	var active := state == FighterState.ATTACK and _attack_phase() == "active"
+	var active := state == FighterState.ATTACK and _is_attack_hitbox_active_frame()
 	_set_attack_hitbox_active(active)
 	if active:
 		_check_attack_overlaps()
@@ -905,7 +1081,7 @@ func _update_attack_hitbox_shape() -> void:
 	var offset := Vector2(84.0, -86.0)
 	var size := Vector2(96.0, 82.0)
 	if _active_attack != "" and _attack_defs.has(_active_attack):
-		var data := _attack_data()
+		var data := _current_attack_hit_data()
 		offset = data["hitbox_offset"]
 		size = data["hitbox_size"]
 	attack_hitbox.position = Vector2(offset.x * facing_dir, offset.y)
@@ -954,28 +1130,72 @@ func _resolve_opponent() -> void:
 
 
 func _read_local_inputs() -> void:
+	_left_pressed = _consume_just_pressed(KEY_A)
+	_right_pressed = _consume_just_pressed(KEY_D)
+	_down_pressed = _consume_just_pressed(KEY_S)
 	_move_dir = 0
 	if Input.is_physical_key_pressed(KEY_A):
 		_move_dir -= 1
 	if Input.is_physical_key_pressed(KEY_D):
 		_move_dir += 1
 	_down_held = Input.is_physical_key_pressed(KEY_S)
+	if not _down_held:
+		_slide_lockout = false
 	_guard_held = Input.is_physical_key_pressed(GUARD_KEY)
 	_jump_pressed = _consume_just_pressed(KEY_W)
 	_attack_requests.clear()
-	if _consume_just_pressed(KEY_J):
+
+	var light_pressed := _consume_just_pressed(KEY_J)
+	var medium_pressed := _consume_just_pressed(KEY_K)
+	var heavy_pressed := _consume_just_pressed(KEY_L)
+	if light_pressed:
+		_record_combo_input("light")
+	if medium_pressed:
+		_record_combo_input("medium")
+	if heavy_pressed:
+		_record_combo_input("heavy")
+
+	if (light_pressed and medium_pressed and heavy_pressed) or _consume_full_combo_sequence():
+		_attack_requests.append("full_combo")
+		_combo_input_buffer.clear()
+		return
+
+	if light_pressed:
 		_attack_requests.append("light")
-	if _consume_just_pressed(KEY_K):
+	if medium_pressed:
 		_attack_requests.append("medium")
-	if _consume_just_pressed(KEY_L):
+	if heavy_pressed:
 		_attack_requests.append("heavy")
+
+
+func _record_combo_input(attack_name: String) -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	_combo_input_buffer.append({"attack": attack_name, "time": now})
+	while _combo_input_buffer.size() > 0 and now - float(_combo_input_buffer[0]["time"]) > FULL_COMBO_INPUT_WINDOW:
+		_combo_input_buffer.pop_front()
+	while _combo_input_buffer.size() > 6:
+		_combo_input_buffer.pop_front()
+
+
+func _consume_full_combo_sequence() -> bool:
+	var wanted := ["light", "medium", "heavy"]
+	var wanted_index := wanted.size() - 1
+	for i in range(_combo_input_buffer.size() - 1, -1, -1):
+		if str(_combo_input_buffer[i]["attack"]) == wanted[wanted_index]:
+			wanted_index -= 1
+			if wanted_index < 0:
+				return true
+	return false
 
 
 func _update_bot_ai(delta: float) -> void:
 	_move_dir = 0
 	_down_held = false
+	_down_pressed = false
 	_guard_held = false
 	_jump_pressed = false
+	_left_pressed = false
+	_right_pressed = false
 	_attack_requests.clear()
 	_bot_attack_cooldown = maxf(_bot_attack_cooldown - delta, 0.0)
 	_bot_mode_timer = maxf(_bot_mode_timer - delta, 0.0)
@@ -1016,6 +1236,12 @@ func _update_bot_ai(delta: float) -> void:
 			elif _bot_attack_cooldown <= 0.0:
 				_attack_requests.append("heavy")
 				_bot_attack_cooldown = _bot_rng.randf_range(0.50, 0.90)
+		"combo":
+			if abs_distance > bot_attack_range * 0.92:
+				_move_dir = to_opponent
+			elif _bot_attack_cooldown <= 0.0:
+				_attack_requests.append("full_combo")
+				_bot_attack_cooldown = _bot_rng.randf_range(0.90, 1.45)
 		_:
 			pass
 
@@ -1036,8 +1262,10 @@ func _choose_bot_mode(abs_distance: float) -> void:
 			_bot_mode = "jump"
 		elif roll < 0.86:
 			_bot_mode = "poke"
-		else:
+		elif roll < 0.95:
 			_bot_mode = "heavy"
+		else:
+			_bot_mode = "combo"
 	elif abs_distance < bot_attack_range * 1.65:
 		if roll < 0.20:
 			_bot_mode = "retreat"
@@ -1045,10 +1273,12 @@ func _choose_bot_mode(abs_distance: float) -> void:
 			_bot_mode = "guard"
 		elif roll < 0.52:
 			_bot_mode = "jump"
-		elif roll < 0.82:
+		elif roll < 0.78:
 			_bot_mode = "approach"
-		else:
+		elif roll < 0.93:
 			_bot_mode = "poke"
+		else:
+			_bot_mode = "combo"
 	else:
 		if roll < 0.18:
 			_bot_mode = "wait"
@@ -1116,7 +1346,7 @@ func _ground_speed_for_input(input_dir: int) -> float:
 
 
 func _update_facing() -> void:
-	if state != FighterState.ATTACK and state != FighterState.HITSTUN and state != FighterState.BLOCKSTUN and state != FighterState.DEAD:
+	if state != FighterState.DASH and state != FighterState.SLIDE and state != FighterState.ATTACK and state != FighterState.HITSTUN and state != FighterState.BLOCKSTUN and state != FighterState.DEAD:
 		if opponent != null and is_instance_valid(opponent):
 			var distance := opponent.global_position.x - global_position.x
 			if absf(distance) > 2.0:
@@ -1140,6 +1370,48 @@ func _attack_data() -> Dictionary:
 	if _active_attack == "" or not _attack_defs.has(_active_attack):
 		return {}
 	return _attack_defs[_active_attack]
+
+
+func _current_attack_segment(data := {}) -> Dictionary:
+	if data.is_empty():
+		data = _attack_data()
+	if data.is_empty() or not data.has("hit_segments"):
+		return {}
+	var segments: Array = data["hit_segments"]
+	for segment in segments:
+		if _state_frame >= int(segment["start"]) and _state_frame < int(segment["end"]):
+			return segment
+	return {}
+
+
+func _current_attack_hit_data() -> Dictionary:
+	var data := _attack_data().duplicate(true)
+	if data.is_empty():
+		return {}
+	var segment := _current_attack_segment(data)
+	if segment.is_empty():
+		return data
+	for key in segment.keys():
+		if key != "start" and key != "end" and key != "hit_id":
+			data[key] = segment[key]
+	return data
+
+
+func _current_attack_hit_id() -> String:
+	var data := _attack_data()
+	var segment := _current_attack_segment(data)
+	if segment.is_empty():
+		return _active_attack
+	return "%s:%s" % [_active_attack, str(segment.get("hit_id", "hit"))]
+
+
+func _is_attack_hitbox_active_frame() -> bool:
+	var data := _attack_data()
+	if data.is_empty():
+		return false
+	if data.has("hit_segments"):
+		return not _current_attack_segment(data).is_empty()
+	return _attack_phase() == "active"
 
 
 func _attack_total_frames(data: Dictionary) -> int:
@@ -1210,6 +1482,8 @@ func _state_name() -> String:
 			return "jump"
 		FighterState.DASH:
 			return "dash"
+		FighterState.SLIDE:
+			return "slide"
 		FighterState.ATTACK:
 			return "attack"
 		FighterState.BLOCK:

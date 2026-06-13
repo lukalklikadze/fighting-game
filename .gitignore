@@ -12,6 +12,10 @@ builds/
 data_*/
 mono_crash.*.json
 
+# Generated GDExtension API dumps (not part of the project)
+extension_api.json
+gdextension_interface.h
+
 # OS generated
 .DS_Store
 Thumbs.db
