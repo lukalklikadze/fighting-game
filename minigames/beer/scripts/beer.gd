@@ -409,6 +409,14 @@ func _make_panel(header: String, is_you: bool) -> Array:
 	pct.add_theme_constant_override("outline_size", 6)
 	col.add_child(pct)
 
+	if is_you:
+		var hint := Label.new()
+		hint.text = "HOLD SPACE TO FILL"
+		hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		hint.add_theme_font_size_override("font_size", 16)
+		hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
+		col.add_child(hint)
+
 	# Per-panel WINNER/LOSER/DRAW overlay, centered over this side.
 	var overlay := CenterContainer.new()
 	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)

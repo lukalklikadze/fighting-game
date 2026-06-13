@@ -50,7 +50,8 @@ var my_vx     := 0.0
 var my_lean   := 0.0
 var my_ball   := Vector2.ZERO
 var my_bvel   := Vector2.ZERO
-var my_kick   := 0.0    # remaining kick animation time
+var my_kick       := 0.0    # remaining kick animation time
+var my_kick_right := true   # which leg is swinging
 var my_alive  := true
 var my_ramp_t := 0.0
 var my_speed  := 1.0    # kick velocity multiplier; grows over time
@@ -59,7 +60,8 @@ var my_speed  := 1.0    # kick velocity multiplier; grows over time
 var op_x: float = HALF_W / 2.0
 var op_lean   := 0.0
 var op_ball   := Vector2.ZERO
-var op_kick   := 0.0
+var op_kick       := 0.0
+var op_kick_right := true
 var op_alive  := false   # true once opponent connects
 
 var winner    := ""      # "" | "you" | "opponent"
@@ -77,7 +79,15 @@ func _ready() -> void:
 	get_window().content_scale_mode   = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
 	get_window().content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MAXIMIZED)
-	_font = ThemeDB.fallback_font
+	var base_font := SystemFont.new()
+	base_font.font_names = PackedStringArray([
+		"Marker Felt", "Chalkboard SE", "Noteworthy", "Bradley Hand",
+		"Segoe Script", "Comic Sans MS", "Comic Sans MS",
+	])
+	var chubby := FontVariation.new()
+	chubby.base_font = base_font
+	chubby.variation_embolden = 0.6
+	_font = chubby
 	solo    = true
 	am_host = true
 	my_ball = Vector2(HALF_W / 2.0, GROUND_Y - 160.0)
@@ -101,7 +111,8 @@ func _process(delta: float) -> void:
 	if winner == "":
 		_update(delta)
 		if not solo and op_alive:
-			_net_state.rpc(my_x, my_lean, my_ball.x, my_ball.y, my_kick)
+			var signed_kick := my_kick * (1.0 if my_kick_right else -1.0)
+			_net_state.rpc(my_x, my_lean, my_ball.x, my_ball.y, signed_kick)
 	queue_redraw()
 
 func _update(delta: float) -> void:
@@ -151,6 +162,7 @@ func _input(event: InputEvent) -> void:
 	if do_kick: _kick()
 
 func _kick() -> void:
+	my_kick_right = my_ball.x >= my_x
 	my_kick = KICK_DURATION
 	var dx      := absf(my_ball.x - my_x)
 	var ball_h  := GROUND_Y - my_ball.y   # distance above ground (positive = airborne)
@@ -163,7 +175,9 @@ func _kick() -> void:
 @rpc("any_peer", "call_remote", "unreliable")
 func _net_state(x: float, lean: float, bx: float, by: float, kick: float) -> void:
 	op_x = x;  op_lean = lean
-	op_ball = Vector2(bx, by);  op_kick = kick
+	op_ball = Vector2(bx, by)
+	op_kick_right = kick >= 0.0
+	op_kick = absf(kick)
 
 @rpc("any_peer", "call_remote", "reliable")
 func _net_lost() -> void:
@@ -172,8 +186,8 @@ func _net_lost() -> void:
 # ══════════════════════════════════ DRAW ══════════════════════════════════════
 func _draw() -> void:
 	_draw_pitch()
-	_draw_half(0.0,    my_x, my_lean, my_ball, my_kick, my_alive, true)
-	_draw_half(HALF_W, op_x, op_lean, op_ball, op_kick, op_alive, false)
+	_draw_half(0.0,    my_x, my_lean, my_ball, my_kick, my_alive, true,  my_kick_right)
+	_draw_half(HALF_W, op_x, op_lean, op_ball, op_kick, op_alive, false, op_kick_right)
 	if _countdown_text != "":
 		_lbl(Vector2(SW / 2.0, SH / 2.0), _countdown_text, Color.WHITE, 96)
 	elif winner != "":
@@ -218,8 +232,6 @@ func _draw_pitch() -> void:
 	draw_rect(Rect2(HALF_W - 7, dy, 14, dh), Color(0.6, 0.72, 1.0, 0.12 * pulse))
 	draw_rect(Rect2(HALF_W - 3, dy, 6,  dh), Color(0.8, 0.86, 1.0, 0.30 * pulse))
 	draw_rect(Rect2(HALF_W - 1.5, dy, 3, dh), Color(1, 1, 1, 0.92))
-	draw_circle(Vector2(HALF_W, SH / 2.0), 9.0, Color.WHITE)
-
 	# Floodlights
 	for fx: float in [0.09, 0.5, 0.91]:
 		_draw_floodlight(SW * fx, t, true)
@@ -265,50 +277,54 @@ func _draw_floodlight(x: float, t: float, top: bool) -> void:
 
 # ── One player's half ─────────────────────────────────────────────────────────
 func _draw_half(ox: float, fig_x: float, lean: float, ball: Vector2,
-		kick_t: float, alive: bool, is_mine: bool) -> void:
+		kick_t: float, alive: bool, is_mine: bool, kick_right: bool) -> void:
 
 	var fig_col  := Color(0.30, 0.62, 1.00) if is_mine else Color(1.00, 0.38, 0.28)
 	var ball_col := Color.WHITE
 
 	if alive:
 		var hip := Vector2(ox + fig_x, GROUND_Y - LEG_LEN)
-		_draw_figure(hip, lean, kick_t, fig_col)
+		_draw_figure(hip, lean, kick_t, fig_col, kick_right)
 		_draw_ball(Vector2(ox + ball.x, ball.y), ball_col)
 	elif solo and not is_mine:
 		# Solo mode: show idle grey placeholder on opponent side
 		var hip := Vector2(ox + HALF_W / 2.0, GROUND_Y - LEG_LEN)
-		_draw_figure(hip, 0.0, 0.0, Color(0.55, 0.55, 0.55))
+		_draw_figure(hip, 0.0, 0.0, Color(0.55, 0.55, 0.55), true)
 	else:
 		_draw_fallen(Vector2(ox + fig_x, GROUND_Y), fig_col)
 
 	var label := "YOU  [A / D + SPACE]" if is_mine else ("OPPONENT" if op_alive else ("—" if solo else "WAITING…"))
-	_lbl(Vector2(ox + HALF_W / 2.0, 20.0), label, Color.WHITE, 14)
+	_lbl(Vector2(ox + HALF_W / 2.0, 86.0), label, Color.WHITE, 14)
 
 # ── Stick figure ──────────────────────────────────────────────────────────────
-func _draw_figure(hip: Vector2, lean: float, kick_t: float, col: Color) -> void:
+func _draw_figure(hip: Vector2, lean: float, kick_t: float, col: Color, kick_right: bool) -> void:
 	var lw  := 4.0
 	var lw2 := 3.0
+	var p   := 0.0
+	if kick_t > 0.0:
+		p = sin((1.0 - kick_t / KICK_DURATION) * PI)
 
 	# ── Upper body ───────────────────────────────────────────────────────────
 	var neck := hip + Vector2(lean * 16.0, -BODY_LEN)
 	var head := neck + Vector2(lean * 5.0, -HEAD_R * 1.6)
 
-	# Shoulders — small horizontal bar at neck
 	var ls := neck + Vector2(-14.0 - lean * 4.0, 4.0)
 	var rs := neck + Vector2( 14.0 + lean * 4.0, 4.0)
 
 	# ── Legs ─────────────────────────────────────────────────────────────────
 	var thigh := LEG_LEN * 0.50
-	# Natural slight outward bend at knees, feet wider than knees
 	var lk := hip + Vector2(-13.0 + lean * 3.0, thigh)
 	var rk := hip + Vector2( 13.0 + lean * 3.0, thigh)
 	var lf := Vector2(hip.x - 17.0 + lean * 2.0, GROUND_Y)
 	var rf  := Vector2(hip.x + 17.0 + lean * 2.0, GROUND_Y)
 
 	if kick_t > 0.0:
-		var p := sin((1.0 - kick_t / KICK_DURATION) * PI)
-		rk = hip + Vector2(14.0 + p * 26.0, thigh * (1.0 - p * 0.5))
-		rf = Vector2(hip.x + 16.0 + p * 56.0, hip.y + LEG_LEN * 0.78 - p * 42.0)
+		if kick_right:
+			rk = hip + Vector2(14.0 + p * 26.0,  thigh * (1.0 - p * 0.5))
+			rf = Vector2(hip.x + 16.0 + p * 56.0, hip.y + LEG_LEN * 0.78 - p * 42.0)
+		else:
+			lk = hip + Vector2(-14.0 - p * 26.0,  thigh * (1.0 - p * 0.5))
+			lf = Vector2(hip.x - 16.0 - p * 56.0, hip.y + LEG_LEN * 0.78 - p * 42.0)
 
 	# Thighs & shins
 	draw_line(hip, lk, col, lw,  true)
@@ -320,30 +336,34 @@ func _draw_figure(hip: Vector2, lean: float, kick_t: float, col: Color) -> void:
 	draw_circle(lk, 3.5, col)
 	draw_circle(rk, 3.5, col)
 
-	# Feet — short horizontal lines
-	draw_line(lf + Vector2(-8.0, 0), lf + Vector2(5.0, 0), col, lw2, true)
-	if kick_t > 0.0:
-		var p := sin((1.0 - kick_t / KICK_DURATION) * PI)
+	# Feet
+	if kick_t > 0.0 and not kick_right:
+		draw_line(lf + Vector2(-9.0, p * 3.0), lf + Vector2(4.0, p * -3.0), col, lw2, true)
+	else:
+		draw_line(lf + Vector2(-8.0, 0), lf + Vector2(5.0, 0), col, lw2, true)
+
+	if kick_t > 0.0 and kick_right:
 		draw_line(rf + Vector2(-4.0, p * -3.0), rf + Vector2(9.0, p * 3.0), col, lw2, true)
 	else:
 		draw_line(rf + Vector2(-5.0, 0), rf + Vector2(8.0, 0), col, lw2, true)
 
 	# ── Torso ────────────────────────────────────────────────────────────────
-	# Hip-width bar
 	draw_line(hip + Vector2(-10.0, 0), hip + Vector2(10.0, 0), col, lw2, true)
 	draw_line(hip, neck, col, lw, true)
 
-	# ── Arms ─────────────────────────────────────────────────────────────────
+	# ── Arms — opposite arm swings back during kick for balance ──────────────
 	var la := ls + Vector2(-ARM_LEN * 0.72 - lean * 10.0, ARM_LEN * 0.78)
 	var ra := rs + Vector2( ARM_LEN * 0.72 + lean * 10.0, ARM_LEN * 0.78)
 	if kick_t > 0.0:
-		var p := sin((1.0 - kick_t / KICK_DURATION) * PI)
-		la = ls + Vector2(-ARM_LEN * 1.2, -ARM_LEN * 0.30 + p * ARM_LEN * 0.55)
-		ra = rs + Vector2( ARM_LEN * 0.55, -ARM_LEN * 0.18)
+		if kick_right:
+			la = ls + Vector2(-ARM_LEN * 1.2, -ARM_LEN * 0.30 + p * ARM_LEN * 0.55)
+			ra = rs + Vector2( ARM_LEN * 0.55, -ARM_LEN * 0.18)
+		else:
+			ra = rs + Vector2( ARM_LEN * 1.2, -ARM_LEN * 0.30 + p * ARM_LEN * 0.55)
+			la = ls + Vector2(-ARM_LEN * 0.55, -ARM_LEN * 0.18)
 
 	draw_line(ls, la, col, lw2, true)
 	draw_line(rs, ra, col, lw2, true)
-	# Hand dots
 	draw_circle(la, 3.0, col)
 	draw_circle(ra, 3.0, col)
 
