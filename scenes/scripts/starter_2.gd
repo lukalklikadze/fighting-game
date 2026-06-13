@@ -72,6 +72,7 @@ func _ready() -> void:
 	# tint the clear color to the seats' navy so any sliver blends in.)
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 	RenderingServer.set_default_clear_color(Color(0.05, 0.10, 0.25, 1.0))
+	randomize()
 	for ball_name in BALL_ORDER:
 		var ball := get_node(NodePath(ball_name)) as Sprite2D
 		_balls[ball_name] = ball
@@ -234,14 +235,28 @@ func _update_highlight() -> void:
 
 
 func _choose(index: int) -> void:
+	# RANDOM resolves to a concrete fighter (avoiding the opponent's, if known)
+	# so the matchup always maps to a real trash-talk dialog and fighter.
+	if BALL_ORDER[index] == "random":
+		index = _resolve_random()
 	_chosen = index
-	# Tell the other player which fighter we picked.
+	_character_display.texture = CHAR_TEXTURES[BALL_ORDER[index]]
+	_character_display.visible = true
+	# Tell the other player which fighter we picked (already resolved).
 	if _hosting_active or _connected_as_client:
 		_rpc_set_opponent_choice.rpc(index)
 	if _test_mode:
 		return
 	_set_status("Waiting for both to choose...")
 	_maybe_start()
+
+
+func _resolve_random() -> int:
+	# Concrete fighters are indices 0..2 (georgian, scottish, english).
+	var pool := [0, 1, 2]
+	if _opp_chosen in pool:
+		pool.erase(_opp_chosen)
+	return pool[randi() % pool.size()]
 
 
 @rpc("any_peer", "call_remote", "reliable")
@@ -278,8 +293,10 @@ func _goto_fight(p1_key: String, p2_key: String, cpid: int) -> void:
 	MatchSetup.p1_choice = p1_key
 	MatchSetup.p2_choice = p2_key
 	MatchSetup.client_peer_id = cpid
-	# The ENet peer persists across the scene change.
-	get_tree().change_scene_to_file("res://scenes/WhiteWorldTest.tscn")
+	# The ENet peer persists across the scene change. Detour through the bar
+	# cutscene + trash talk; the fight is launched at the end of trash talk
+	# (host-driven) using this same MatchSetup data.
+	get_tree().change_scene_to_file("res://bar.tscn")
 
 
 func _send_choice_to(peer_id: int) -> void:
