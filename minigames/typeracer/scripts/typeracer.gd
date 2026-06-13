@@ -40,11 +40,15 @@ var game_active := false
 
 var opp_cursor := 0     # opponent's progress (synced, or driven by the bot)
 var opp_error := false  # opponent's current-char error state (synced)
+var opp_finished := false   # has the opponent finished?
 
 # --- Solo practice mode -----------------------------------------------------
 var solo := false           # playing alone vs a bot (no networking)
 const BOT_SPEED := 3.5       # bot typing speed in characters per second
 var bot_progress := 0.0      # fractional char count the bot has "typed"
+
+# --- Multiplayer draw detection ---------------------------------------------
+var _finishers: Array[int] = []  # peer IDs that have reported finished (host only)
 
 # Handwriting-style font pulled from the OS (with fallbacks across platforms),
 # emboldened for a chubby look.
@@ -171,7 +175,9 @@ func _begin_match(text: String) -> void:
 	finished = false
 	opp_cursor = 0
 	opp_error = false
+	opp_finished = false
 	bot_progress = 0.0
+	_finishers = []
 	game_active = false
 	game_ui.visible = true
 	you_result.get_parent().visible = false
@@ -193,32 +199,56 @@ func _begin_match(text: String) -> void:
 
 # Drives the bot opponent in solo mode.
 func _process(delta: float) -> void:
-	if not solo or not game_active or finished:
+	if not solo or not game_active or opp_finished:
 		return
 	bot_progress += delta * BOT_SPEED
 	opp_cursor = min(int(bot_progress), target.length())
 	_render_opponent()
 	if opp_cursor >= target.length():
-		_show_result(false) # the bot finished first
+		opp_finished = true
+		if finished:
+			_show_draw()  # both finished in the same frame
+		else:
+			_show_result(false)  # bot finished first
 
 
 func _show_result(won: bool) -> void:
 	game_active = false
-	result_label.visible = false # hide any lingering countdown text
-	# Clear the race text so only the outcome message remains.
+	result_label.visible = false
 	you_label.text = ""
 	opp_label.text = ""
 	you_progress.text = ""
 	opp_progress.text = ""
-	# Each side of the screen shows its own outcome.
 	_set_panel_result(you_result, won)
 	_set_panel_result(opp_result, not won)
+
+
+func _show_draw() -> void:
+	game_active = false
+	result_label.visible = false
+	you_label.text = ""
+	opp_label.text = ""
+	you_progress.text = ""
+	opp_progress.text = ""
+	for lbl in [you_result, opp_result]:
+		lbl.text = "DRAW"
+		lbl.add_theme_color_override("font_color", Color("#ffd166"))
+		lbl.get_parent().visible = true
+	_restart_on_draw()
+
+
+func _restart_on_draw() -> void:
+	await get_tree().create_timer(2.0).timeout
+	if solo:
+		_begin_match(SENTENCES[randi() % SENTENCES.size()])
+	elif multiplayer.is_server():
+		start_game.rpc(SENTENCES[randi() % SENTENCES.size()])
 
 
 func _set_panel_result(label: Label, is_winner: bool) -> void:
 	label.text = "WINNER" if is_winner else "LOSER"
 	label.add_theme_color_override("font_color", Color(COL_DONE) if is_winner else Color(COL_ERROR))
-	label.get_parent().visible = true # the backing box
+	label.get_parent().visible = true
 
 
 # Local player keeps the opponent's panel up to date with their progress.
@@ -229,21 +259,35 @@ func update_progress(c: int, e: bool) -> void:
 	_render_opponent()
 
 
-# A player tells the host they finished. The host decides the first finisher.
+# A player tells the host they finished. Simultaneous finishes → draw.
 @rpc("any_peer", "call_local", "reliable")
 func report_finished() -> void:
 	if not multiplayer.is_server():
 		return
 	var sender := multiplayer.get_remote_sender_id()
 	if sender == 0:
-		sender = multiplayer.get_unique_id() # host called it locally
-	set_winner.rpc(sender)
+		sender = multiplayer.get_unique_id()
+	if sender not in _finishers:
+		_finishers.append(sender)
+	if _finishers.size() == 1:
+		# Wait one frame — if the other peer also finishes this frame it's a draw.
+		_announce_winner.call_deferred()
 
 
-# Host announces the winner to everyone.
+func _announce_winner() -> void:
+	if _finishers.size() >= 2:
+		set_result.rpc(0)  # draw
+	else:
+		set_result.rpc(_finishers[0])
+
+
+# Host announces the result to everyone (winner_id == 0 means draw).
 @rpc("authority", "call_local", "reliable")
-func set_winner(winner_id: int) -> void:
-	_show_result(winner_id == multiplayer.get_unique_id())
+func set_result(winner_id: int) -> void:
+	if winner_id == 0:
+		_show_draw()
+	else:
+		_show_result(winner_id == multiplayer.get_unique_id())
 
 
 # ===========================================================================
@@ -279,7 +323,10 @@ func _input(event: InputEvent) -> void:
 			finished = true
 			_render_you()
 			if solo:
-				_show_result(true) # beat the bot to the end
+				if opp_finished:
+					_show_draw()  # bot already finished — same frame
+				else:
+					_show_result(true)  # beat the bot
 			else:
 				update_progress.rpc(cursor, error) # let the opponent see the full bar
 				report_finished.rpc()

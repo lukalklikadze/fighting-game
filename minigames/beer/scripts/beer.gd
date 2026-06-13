@@ -13,6 +13,7 @@ const MAX_FLOW := 0.35     # max pour speed (fill per second) while holding
 const POUR_ACCEL := 1.2    # how fast the flow ramps up while held
 const POUR_DECEL := 0.9    # how fast the flow eases off after release (momentum)
 const SPILL_LIMIT := 1.30  # the cup fully spills here
+const FOAM_ZONE   := 0.02  # tiny grace margin above the brim before it counts as a spill
 
 # Accent colors (panel headers, WINNER/LOSER/DRAW messages).
 const COL_WIN := "#3ddc84"
@@ -270,9 +271,9 @@ func _resolve_solo() -> void:
 # Distance from a perfect pour (lower is better). Any spill (>1.0) ranks below
 # every clean pour; among spills, the smaller overflow is better.
 func _score(f: float) -> float:
-	if f <= 1.0:
-		return 1.0 - f
-	return 1.0 + (f - 1.0)
+	if f <= 1.0 + FOAM_ZONE:
+		return abs(1.0 - f)            # 0 = perfect brim; foam zone scores slightly worse but not a spill
+	return 1.0 + FOAM_ZONE + (f - 1.0 - FOAM_ZONE)  # real spill — heavily penalised
 
 
 func _outcome(mine: float, other: float) -> String:
@@ -289,6 +290,13 @@ func _show_outcome(you_text: String, opp_text: String) -> void:
 	result_label.visible = false
 	_set_panel_result(you_result, you_text)
 	_set_panel_result(opp_result, opp_text)
+	if you_text == "DRAW":
+		_restart_on_draw()
+
+
+func _restart_on_draw() -> void:
+	await get_tree().create_timer(2.0).timeout
+	_begin_match()
 
 
 func _set_panel_result(label: Label, text: String) -> void:
@@ -317,9 +325,9 @@ func _render_opponent() -> void:
 
 
 func _fill_text(f: float) -> String:
-	if f > 1.0:
+	if f > 1.0 + FOAM_ZONE:
 		return "SPILLED!"
-	return "%d%%" % roundi(f * 100.0)
+	return "%d%%" % roundi(minf(f, 1.0) * 100.0)
 
 
 # ===========================================================================
