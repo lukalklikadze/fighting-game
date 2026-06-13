@@ -42,7 +42,10 @@ var bot_target := 0.9    # the fill the bot tries to stop at
 # --- Embedded mode (launched as a "super" by the fight controller) ----------
 signal minigame_finished(result: int)  # 1 = local won, 0 = local lost, -1 = draw
 var embedded := false
+var networked := false
 var _result_emitted := false
+var _net_elapsed := 0.0
+const MAX_ROUND_TIME := 12.0   # safety timeout: an idle pour auto-locks so it resolves
 
 # Host-side bookkeeping for deciding the winner.
 var _finals := {}
@@ -98,6 +101,15 @@ func _ready() -> void:
 # Public entry point used by the fight controller for an embedded super.
 func begin_solo() -> void:
 	_on_solo_pressed()
+
+
+# Networked embedded entry: runs over the fight's peer; host starts both.
+func begin_networked(is_host: bool) -> void:
+	solo = false
+	networked = true
+	_net_elapsed = 0.0
+	if is_host:
+		start_game.rpc()
 
 
 func _emit_embedded_result(result: int) -> void:
@@ -184,6 +196,12 @@ func _begin_match() -> void:
 func _process(delta: float) -> void:
 	if not game_active or finished:
 		return
+
+	# Networked safety: an idle/never-stopped pour auto-locks so the round resolves.
+	if networked and not stopped:
+		_net_elapsed += delta
+		if _net_elapsed >= MAX_ROUND_TIME:
+			_lock()
 
 	# Hold Space/Enter to pour; release to ease the flow smoothly to a stop.
 	if not stopped:

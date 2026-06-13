@@ -1,13 +1,12 @@
 extends SpecialAbility
 class_name TrumpetBlast
 
-## Scottish fighter — blows a trumpet/bagpipe, releasing a gust of air that
-## knocks the opponent back if they are close and in front. The honking sound is
-## played by the AirBlastEffect (swap its TRUMPET_SOUND constant to change it).
+## Scottish fighter — blows a trumpet/bagpipe, releasing a medium-range gust of
+## air. Anyone the blue gust reaches (in front, within its visual reach) takes
+## damage + knockback; the hit lands as the gust front sweeps onto them, not on
+## direct contact. The honk is played by the AirBlastEffect.
 
-const RANGE := 250.0                  # only blows opponents within this distance
 const HIT_PAYLOAD := "special_trumpet"
-const KNOCKBACK_DELAY := 0.22         # let the wind gust visibly sweep across first
 
 func id() -> String:
 	return "trumpet"
@@ -43,7 +42,9 @@ func cast(user, authoritative: bool, origin: Vector2, dir: int) -> void:
 	var to_target: float = float(target.global_position.x) - float(user.global_position.x)
 	if signf(to_target) != float(dir):
 		return                          # opponent is behind — the gust misses
-	if absf(to_target) > RANGE:
-		return
-	# Knock back only after the gust has had time to travel across.
-	user.deal_special_hit_after(target, HIT_PAYLOAD, KNOCKBACK_DELAY)
+	var dist := absf(to_target)
+	if dist > AirBlastEffect.REACH:
+		return                          # beyond the gust's reach
+	# The hit lands as the gust front sweeps onto them: closer = sooner.
+	var travel := (dist / AirBlastEffect.REACH) * AirBlastEffect.LIFETIME
+	user.deal_special_hit_after(target, HIT_PAYLOAD, travel)

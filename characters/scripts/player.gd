@@ -1192,10 +1192,21 @@ func reset_super() -> void:
 # Reward both sides of a confirmed hit (gated so the plain online match is
 # unaffected: meter only moves when the controller has enabled the system).
 func _grant_combat_super(attacker: Node2D, damage: int) -> void:
+	# This runs on the VICTIM's authority. The victim gains meter locally; the
+	# attacker must gain on ITS OWN authority (here it is the remote copy, which
+	# the network sync would otherwise overwrite), so route it via RPC.
 	if super_fill_enabled:
 		add_super(float(damage) * SUPER_METER_PER_DMG_TAKEN)
-	if attacker != null and attacker != self and bool(attacker.get("super_fill_enabled")):
-		attacker.call("add_super", float(damage) * SUPER_METER_PER_DMG_DEALT)
+	if attacker != null and attacker != self:
+		attacker.grant_deal_meter.rpc(damage)
+
+
+@rpc("any_peer", "call_local", "reliable")
+func grant_deal_meter(damage: int) -> void:
+	# Applied only on the fighter's own authority (the one that actually owns
+	# this meter), so the dealt-damage gain isn't lost to the position sync.
+	if is_multiplayer_authority() and super_fill_enabled:
+		add_super(float(damage) * SUPER_METER_PER_DMG_DEALT)
 
 
 # Damage dealt by a resolved super attack (from the minigame outcome). Routes a
@@ -1302,6 +1313,7 @@ func _send_network_state(reliable: bool) -> void:
 		sprite.frame,
 		sprite.is_playing(),
 		sprite.modulate,
+		super_meter,
 	]
 	if reliable:
 		_rpc_apply_critical_network_state.rpc(args)
@@ -1334,6 +1346,9 @@ func _apply_network_state(args: Array) -> void:
 	if previous_health != health:
 		health_changed.emit(health, max_health)
 	_apply_remote_sprite(str(args[8]), int(args[9]), bool(args[10]), args[11])
+	if args.size() > 12:
+		super_meter = float(args[12])
+		super_meter_changed.emit(super_meter, super_max)
 	_update_attack_hitbox_shape()
 	_update_attack_hitbox_for_frame()
 
@@ -1518,12 +1533,13 @@ func _read_local_inputs() -> void:
 	if Input.is_physical_key_pressed(KEY_D):
 		_move_dir += 1
 	# People (english/georgian/scotish) only walk + hand kick (J) + leg kick (K):
-	# no jump, crouch, block or heavy until those animations exist.
+	# no jump, crouch or heavy until those animations exist. Blocking IS allowed
+	# (hold I) — it shows as a blue tint rather than a dedicated block pose.
 	var simple := _is_simple()
 	_down_held = Input.is_physical_key_pressed(KEY_S) and not simple
 	if not _down_held:
 		_slide_lockout = false
-	_guard_held = Input.is_physical_key_pressed(GUARD_KEY) and not simple
+	_guard_held = Input.is_physical_key_pressed(GUARD_KEY)
 	_jump_pressed = _consume_just_pressed(KEY_W) and not simple
 	_attack_requests.clear()
 	_special_requested = false

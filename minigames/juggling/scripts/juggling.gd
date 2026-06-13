@@ -73,9 +73,14 @@ var solo      := false
 
 # Embedded mode (launched as a "super" by the fight controller)
 signal minigame_finished(result: int)  # 1 = local won, 0 = local lost, -1 = draw
-const EMBED_WIN_KICKS := 6   # reach this many clean kicks to "win" the embedded super
+const EMBED_WIN_KICKS := 6   # solo only: reach this many clean kicks to "win"
+const MAX_DURATION := 30.0   # networked round cap; most kicks wins at timeout
 var embedded := false
+var networked := false
 var _result_emitted := false
+var _net_elapsed := 0.0
+var op_kick_count := 0
+var _net_resolved := false   # host: winner decided
 
 # ─── UI ───────────────────────────────────────────────────────────────────────
 var _font           : Font
@@ -114,6 +119,74 @@ func begin_solo() -> void:
 	_run_countdown()
 
 
+# Networked embedded entry: runs over the fight's peer. Host starts both via the
+# authority RPC; survival game — first to drop loses, most kicks wins at timeout.
+func begin_networked(is_host: bool) -> void:
+	solo = false
+	networked = true
+	am_host = is_host
+	if is_host:
+		_net_start.rpc()
+
+
+@rpc("authority", "call_local", "reliable")
+func _net_start() -> void:
+	winner = ""
+	my_alive = true
+	op_alive = true
+	my_kick_count = 0
+	op_kick_count = 0
+	_net_elapsed = 0.0
+	_net_resolved = false
+	my_ball = Vector2(HALF_W / 2.0, SH / 2.0)
+	my_bvel = Vector2(randf_range(-80.0, 80.0), -380.0)
+	_run_countdown()
+
+
+# A ball hit the ground. The host serializes drops so the first one always loses
+# (no both-drop race), then broadcasts the authoritative result.
+func _report_drop() -> void:
+	if multiplayer.is_server():
+		_register_drop(multiplayer.get_unique_id())
+	else:
+		_net_report_drop.rpc_id(1, multiplayer.get_unique_id())
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _net_report_drop(dropper_id: int) -> void:
+	if multiplayer.is_server():
+		_register_drop(dropper_id)
+
+
+func _register_drop(dropper_id: int) -> void:
+	if _net_resolved:
+		return
+	_net_resolved = true
+	_net_result.rpc(dropper_id)   # the player who dropped loses
+
+
+func _resolve_timeout() -> void:
+	_net_resolved = true
+	if my_kick_count == op_kick_count:
+		_net_result.rpc(0)                      # draw
+	elif my_kick_count > op_kick_count:
+		var peers := multiplayer.get_peers()
+		_net_result.rpc(peers[0] if peers.size() > 0 else 0)  # opponent loses
+	else:
+		_net_result.rpc(multiplayer.get_unique_id())          # host loses
+
+
+@rpc("authority", "call_local", "reliable")
+func _net_result(loser_id: int) -> void:
+	if loser_id == 0:
+		winner = "draw"
+	elif loser_id == multiplayer.get_unique_id():
+		winner = "opponent"   # I lost
+	else:
+		winner = "you"        # I won
+	op_alive = false
+
+
 func _emit_embedded_result(result: int) -> void:
 	if _result_emitted:
 		return
@@ -136,12 +209,16 @@ func _run_countdown() -> void:
 func _process(delta: float) -> void:
 	if not game_on: return
 	if embedded and winner != "" and not _result_emitted:
-		_emit_embedded_result(1 if winner == "you" else 0)
+		_emit_embedded_result(1 if winner == "you" else (-1 if winner == "draw" else 0))
 	if winner == "":
 		_update(delta)
 		if not solo and op_alive:
 			var signed_kick := my_kick * (1.0 if my_kick_right else -1.0)
-			_net_state.rpc(my_x, my_lean, my_ball.x, my_ball.y, signed_kick)
+			_net_state.rpc(my_x, my_lean, my_ball.x, my_ball.y, signed_kick, my_kick_count)
+		if networked and multiplayer.is_server() and not _net_resolved:
+			_net_elapsed += delta
+			if _net_elapsed >= MAX_DURATION:
+				_resolve_timeout()
 	queue_redraw()
 
 func _update(delta: float) -> void:
@@ -165,8 +242,8 @@ func _update(delta: float) -> void:
 		if absf(my_ball.x - foot_x) < BALL_R + 20.0 and absf(my_ball.y - foot_y) < BALL_R + 26.0:
 			my_kick_hit = true
 			my_kick_count += 1
-			if embedded and my_kick_count >= EMBED_WIN_KICKS:
-				winner = "you"   # kept the ball up long enough — super lands
+			if embedded and not networked and my_kick_count >= EMBED_WIN_KICKS:
+				winner = "you"   # solo only: kept the ball up long enough
 			var dir_x := (my_ball.x - my_x) * 1.3
 			var rnd_x := randf_range(-KICK_RAND_X, KICK_RAND_X)
 			my_bvel   = Vector2(dir_x + rnd_x, KICK_VEL_Y) * my_speed
@@ -184,8 +261,10 @@ func _update(delta: float) -> void:
 
 	if my_ball.y + BALL_R >= GROUND_Y:
 		my_alive = false
-		winner   = "opponent"
-		if not solo: _net_lost.rpc()
+		if networked:
+			_report_drop()        # host decides the winner; don't set it locally
+		else:
+			winner = "opponent"   # solo: dropping = you lose
 		return
 
 	# ── Continuous speed ramp ────────────────────────────────────────────────
@@ -211,11 +290,12 @@ func _kick() -> void:
 
 # ══════════════════════════════════ RPCs ══════════════════════════════════════
 @rpc("any_peer", "call_remote", "unreliable")
-func _net_state(x: float, lean: float, bx: float, by: float, kick: float) -> void:
+func _net_state(x: float, lean: float, bx: float, by: float, kick: float, kicks: int) -> void:
 	op_x = x;  op_lean = lean
 	op_ball = Vector2(bx, by)
 	op_kick_right = kick >= 0.0
 	op_kick = absf(kick)
+	op_kick_count = kicks
 
 @rpc("any_peer", "call_remote", "reliable")
 func _net_lost() -> void:

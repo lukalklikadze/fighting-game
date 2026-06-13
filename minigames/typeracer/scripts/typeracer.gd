@@ -50,7 +50,10 @@ var bot_progress := 0.0      # fractional char count the bot has "typed"
 # --- Embedded mode (launched as a "super" by the fight controller) ----------
 signal minigame_finished(result: int)  # 1 = local won, 0 = local lost, -1 = draw
 var embedded := false
+var networked := false
 var _result_emitted := false
+var _net_elapsed := 0.0
+const MAX_ROUND_TIME := 25.0   # safety timeout so a networked round always resolves
 
 # --- Multiplayer draw detection ---------------------------------------------
 var _finishers: Array[int] = []  # peer IDs that have reported finished (host only)
@@ -109,6 +112,17 @@ func _ready() -> void:
 # Public entry point used by the fight controller for an embedded super.
 func begin_solo() -> void:
 	_on_solo_pressed()
+
+
+# Networked embedded entry: runs over the fight's existing peer (no own peer).
+# The host picks the sentence and starts both via the authority RPC; the client
+# just waits for it. First to finish wins; a timeout forces a result.
+func begin_networked(is_host: bool) -> void:
+	solo = false
+	networked = true
+	_net_elapsed = 0.0
+	if is_host:
+		start_game.rpc(SENTENCES[randi() % SENTENCES.size()])
 
 
 func _emit_embedded_result(result: int) -> void:
@@ -218,6 +232,9 @@ func _begin_match(text: String) -> void:
 
 # Drives the bot opponent in solo mode.
 func _process(delta: float) -> void:
+	if networked:
+		_process_net_timeout(delta)
+		return
 	if not solo or not game_active or opp_finished:
 		return
 	bot_progress += delta * BOT_SPEED
@@ -229,6 +246,23 @@ func _process(delta: float) -> void:
 			_show_draw()  # both finished in the same frame
 		else:
 			_show_result(false)  # bot finished first
+
+
+# Host-only safety net: if nobody has finished by MAX_ROUND_TIME, the player who
+# typed the most wins (draw if tied), so a networked round can never hang.
+func _process_net_timeout(delta: float) -> void:
+	if not game_active or finished or _result_emitted:
+		return
+	_net_elapsed += delta
+	if not multiplayer.is_server() or _net_elapsed < MAX_ROUND_TIME:
+		return
+	if cursor == opp_cursor:
+		set_result.rpc(0)
+	elif cursor > opp_cursor:
+		set_result.rpc(multiplayer.get_unique_id())
+	else:
+		var peers := multiplayer.get_peers()
+		set_result.rpc(peers[0] if peers.size() > 0 else 0)
 
 
 func _show_result(won: bool) -> void:

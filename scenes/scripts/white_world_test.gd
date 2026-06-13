@@ -10,6 +10,31 @@ const PLAYER_ONE_START := Vector2(-260, 232)
 const PLAYER_TWO_START := Vector2(260, 232)
 const TITLE_DURATION := 1.8
 const VICTORY_DISPLAY_TIME := 2.6
+
+# --- Lives + super-meter → minigame loop (host-authoritative, RPC-synced) ---
+const TOTAL_BARS := 3
+const TOTAL_SUPERS := 3
+const BIG_SUPER_FRACTION := 0.30     # starter won the minigame
+const SMALL_SUPER_FRACTION := 0.15   # starter lost the minigame
+const KO_FREEZE_TIME := 1.4
+const SUPER_FADE := 0.35
+const MINIGAME_PATHS := {
+	1: "res://minigames/typeracer/scenes/Typeracer.tscn",
+	2: "res://minigames/beer/scenes/Beer.tscn",
+	3: "res://minigames/juggling/scenes/Juggling.tscn",
+}
+enum MatchSub { FIGHT, SUPER, KO }
+
+# Fighting-game camera: follow the midpoint, zoom out as the fighters separate,
+# and clamp to the stage so it never scrolls past the walls (as in Sakuga-Engine
+# / field_trip_fighters). VIEW_W is the logical viewport width.
+const CAM_VIEW_W := 1280.0
+const CAM_STAGE_HALF := 950.0   # camera edge limit (just past the ±900 walls)
+const CAM_MARGIN := 380.0       # extra world width kept around the two fighters
+const CAM_MIN_ZOOM := 0.58      # most zoomed out (fighters far apart)
+const CAM_MAX_ZOOM := 0.95      # most zoomed in (fighters close)
+const CAM_LERP := 0.14          # smoothing toward the target
+const CAM_Y := 10.0
 const RANDOM_SLOT := 3
 const MENU_FONT: FontFile = preload("res://assets/fonts/NotoSansGeorgian-Black.ttf")
 const FIGHTER_ICON: Texture2D = preload("res://assets/Fighter sprites/fighter_Idle_0001.png")
@@ -69,6 +94,16 @@ var _code_edit: LineEdit
 var _host_code_label: Label
 var _status_label: Label
 var _victory_label: Label
+var _msub := MatchSub.FIGHT
+var _bar := {1: 1, 2: 1}
+var _super_connected := false
+var _minigame: Node = null
+var _mg_layer: CanvasLayer
+var _fade_rect: ColorRect
+var _p1_super_bar: ProgressBar
+var _p2_super_bar: ProgressBar
+var _p1_pips: Array = []
+var _p2_pips: Array = []
 var _card_panels: Array[PanelContainer] = []
 var _card_name_labels: Array[Label] = []
 var _card_p1_badges: Array[Label] = []
@@ -122,7 +157,9 @@ func _process(delta: float) -> void:
 		ScreenState.MATCH:
 			_update_camera()
 			_refresh_special_hud()
-			_process_match_end()
+			_refresh_lives_super_hud()
+			if _msub == MatchSub.FIGHT:
+				_process_match_end()
 			_handle_debug_reset()
 
 
@@ -133,11 +170,89 @@ func _build_interface() -> void:
 	_fight_layer = CanvasLayer.new()
 	add_child(_fight_layer)
 	_build_health_hud(_fight_layer)
+	_build_lives_super_hud(_fight_layer)
 	_build_victory_banner(_fight_layer)
+
+	# Minigame renders above the fight; the fade sits above the minigame.
+	# Explicit names so the NodePath is identical on both peers (minigame RPCs).
+	_mg_layer = CanvasLayer.new()
+	_mg_layer.name = "MinigameLayer"
+	_mg_layer.layer = 50
+	add_child(_mg_layer)
+
+	var fade_layer := CanvasLayer.new()
+	fade_layer.name = "FadeLayer"
+	fade_layer.layer = 60
+	add_child(fade_layer)
+	_fade_rect = ColorRect.new()
+	_fade_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_fade_rect.color = Color(0, 0, 0, 0)
+	_fade_rect.visible = false
+	_fade_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fade_layer.add_child(_fade_rect)
 
 	_build_title_screen(_ui_layer)
 	_build_select_screen(_ui_layer)
 	_build_quit_button()
+
+
+# A thin row under the health bars: 3 life pips + a gold super-meter bar per side.
+func _build_lives_super_hud(layer: CanvasLayer) -> void:
+	var row := HBoxContainer.new()
+	row.anchor_left = 0.0
+	row.anchor_top = 0.0
+	row.anchor_right = 1.0
+	row.offset_left = 16.0
+	row.offset_top = 50.0
+	row.offset_right = -16.0
+	row.offset_bottom = 74.0
+	row.add_theme_constant_override("separation", 24)
+	layer.add_child(row)
+
+	var p1_box := HBoxContainer.new()
+	p1_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	p1_box.add_theme_constant_override("separation", 6)
+	row.add_child(p1_box)
+	for i in range(TOTAL_BARS):
+		var pip := ColorRect.new()
+		pip.custom_minimum_size = Vector2(22, 12)
+		p1_box.add_child(pip)
+		_p1_pips.append(pip)
+	_p1_super_bar = _make_super_bar()
+	p1_box.add_child(_p1_super_bar)
+
+	var spacer := Control.new()
+	spacer.custom_minimum_size = Vector2(46, 0)
+	row.add_child(spacer)
+
+	var p2_box := HBoxContainer.new()
+	p2_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	p2_box.add_theme_constant_override("separation", 6)
+	row.add_child(p2_box)
+	_p2_super_bar = _make_super_bar()
+	_p2_super_bar.fill_mode = ProgressBar.FILL_END_TO_BEGIN
+	p2_box.add_child(_p2_super_bar)
+	for i in range(TOTAL_BARS):
+		var pip := ColorRect.new()
+		pip.custom_minimum_size = Vector2(22, 12)
+		p2_box.add_child(pip)
+		_p2_pips.append(pip)
+
+
+func _make_super_bar() -> ProgressBar:
+	var bar := ProgressBar.new()
+	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.custom_minimum_size = Vector2(180, 12)
+	bar.min_value = 0.0
+	bar.max_value = 100.0
+	bar.value = 0.0
+	bar.show_percentage = false
+	bar.add_theme_stylebox_override("background", _panel_style(Color(0.03, 0.03, 0.02, 1.0), Color.BLACK, 1, 3))
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = Color(1.0, 0.82, 0.26, 1.0)
+	fill.set_corner_radius_all(3)
+	bar.add_theme_stylebox_override("fill", fill)
+	return bar
 
 
 func _build_quit_button() -> void:
@@ -579,6 +694,11 @@ func _show_title_screen() -> void:
 
 func _show_select_screen(message := "") -> void:
 	_screen = ScreenState.SELECT
+	_msub = MatchSub.FIGHT
+	_clear_minigame()
+	if _fade_rect != null:
+		_fade_rect.color.a = 0.0
+		_fade_rect.visible = false
 	RenderingServer.set_default_clear_color(Color(0.015, 0.012, 0.012, 1.0))
 	_title_root.visible = false
 	_select_root.visible = true
@@ -824,7 +944,47 @@ func _start_match(client_peer_id: int, p1_character: int, p2_character: int) -> 
 	_apply_character_to_player(player_two, p2_character)
 	_reset_match()
 	_match_end_sent = false
+	# Start the lives + super-meter loop.
+	_bar = {1: 1, 2: 1}
+	_msub = MatchSub.FIGHT
+	player_one.set("super_fill_enabled", true)
+	player_two.set("super_fill_enabled", true)
+	player_one.call("reset_super")
+	player_two.call("reset_super")
+	_connect_super_signals()
 	_show_match_screen()
+
+
+func _connect_super_signals() -> void:
+	if _super_connected:
+		return
+	_super_connected = true
+	player_one.connect("super_full", _on_super_full)
+	player_two.connect("super_full", _on_super_full)
+
+
+func _refresh_lives_super_hud() -> void:
+	if _p1_super_bar != null:
+		_p1_super_bar.max_value = float(player_one.get("super_max"))
+		_p1_super_bar.value = float(player_one.get("super_meter"))
+	if _p2_super_bar != null:
+		_p2_super_bar.max_value = float(player_two.get("super_max"))
+		_p2_super_bar.value = float(player_two.get("super_meter"))
+	_refresh_pips(_p1_pips, 1, P1_COLOR)
+	_refresh_pips(_p2_pips, 2, P2_COLOR)
+
+
+func _refresh_pips(pips: Array, pid: int, col: Color) -> void:
+	var lit := clampi(TOTAL_BARS - (int(_bar[pid]) - 1), 0, TOTAL_BARS)
+	for i in range(pips.size()):
+		pips[i].color = col if i < lit else Color(0.18, 0.18, 0.18, 1.0)
+
+
+func _set_match_frozen(frozen: bool) -> void:
+	player_one.set("accept_local_input", not frozen)
+	player_two.set("accept_local_input", not frozen)
+	player_one.set("super_fill_enabled", not frozen)
+	player_two.set("super_fill_enabled", not frozen)
 
 
 func _other_player(player_id: int) -> int:
@@ -889,6 +1049,15 @@ func _return_to_selection_after_match(message: String) -> void:
 	_selected_by_player[1] = -1
 	_selected_by_player[2] = -1
 	_match_end_sent = false
+	# Tear down the lives/super loop.
+	_msub = MatchSub.FIGHT
+	_bar = {1: 1, 2: 1}
+	_clear_minigame()
+	if _fade_rect != null:
+		_fade_rect.color.a = 0.0
+		_fade_rect.visible = false
+	player_one.set("super_fill_enabled", false)
+	player_two.set("super_fill_enabled", false)
 	# Both players are still connected, so drop them straight back onto the
 	# character grid -- they can only pick again, never touch START/JOIN.
 	_focus = FocusTarget.GRID
@@ -905,8 +1074,8 @@ func _rpc_return_to_selection_after_match(message: String) -> void:
 
 
 func _process_match_end() -> void:
-	if _match_end_sent:
-		return
+	if _match_end_sent or _msub != MatchSub.FIGHT:
+		return   # a super KO is resolved once the sequence returns to FIGHT
 	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
 		return
 	var p1_dead := int(player_one.get("health")) <= 0
@@ -914,10 +1083,161 @@ func _process_match_end() -> void:
 	if not p1_dead and not p2_dead:
 		return
 	_match_end_sent = true
-	var winner := 2 if p1_dead else 1
+	_run_ko(1 if p1_dead else 2)
+
+
+# Host-authoritative: a fighter lost its current bar — death anim, then either
+# resurrect onto the next bar (both reset to start) or end the match.
+func _run_ko(loser: int) -> void:
 	if multiplayer.has_multiplayer_peer():
-		_rpc_play_victory.rpc(winner)
-	_play_victory(winner)
+		_rpc_begin_ko.rpc(loser)
+	_begin_ko(loser)
+	await get_tree().create_timer(KO_FREEZE_TIME).timeout
+	if _screen != ScreenState.MATCH or _msub != MatchSub.KO:
+		return
+	if int(_bar[loser]) < TOTAL_BARS:
+		_bar[loser] += 1
+		if multiplayer.has_multiplayer_peer():
+			_rpc_resume_round.rpc(int(_bar[1]), int(_bar[2]))
+		_resume_round(int(_bar[1]), int(_bar[2]))
+	else:
+		var winner := _other_player(loser)
+		if multiplayer.has_multiplayer_peer():
+			_rpc_play_victory.rpc(winner)
+		_play_victory(winner)
+
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_begin_ko(loser: int) -> void:
+	_begin_ko(loser)
+
+
+func _begin_ko(_loser: int) -> void:
+	_msub = MatchSub.KO
+	_set_match_frozen(true)
+
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_resume_round(b1: int, b2: int) -> void:
+	_resume_round(b1, b2)
+
+
+func _resume_round(b1: int, b2: int) -> void:
+	_bar[1] = b1
+	_bar[2] = b2
+	_match_end_sent = false
+	player_one.call("reset_fighter", PLAYER_ONE_START, true)
+	player_two.call("reset_fighter", PLAYER_TWO_START, true)
+	_msub = MatchSub.FIGHT
+	_set_match_frozen(false)
+	_refresh_health_hud()
+	_refresh_lives_super_hud()
+
+
+# ===========================================================================
+#  Super meter -> networked minigame
+# ===========================================================================
+
+func _on_super_full(pid: int) -> void:
+	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
+		_rpc_request_super.rpc_id(1, pid)
+	else:
+		_host_begin_super(pid)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_request_super(pid: int) -> void:
+	if multiplayer.is_server():
+		_host_begin_super(pid)
+
+
+func _host_begin_super(attacker: int) -> void:
+	# Simple rule: a full meter fires a RANDOM minigame, any time, as often as it
+	# refills. One super at a time (host gates on FIGHT). The host picks the
+	# random minigame and broadcasts it so both peers run the same one.
+	if _screen != ScreenState.MATCH or _msub != MatchSub.FIGHT:
+		return
+	var which := _rng.randi_range(1, TOTAL_SUPERS)
+	if multiplayer.has_multiplayer_peer():
+		_rpc_begin_super.rpc(which, attacker)
+	_run_super(which, attacker)
+
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_begin_super(which: int, attacker: int) -> void:
+	_run_super(which, attacker)
+
+
+func _run_super(which: int, attacker: int) -> void:
+	_msub = MatchSub.SUPER
+	_set_match_frozen(true)
+	var atk: Node2D = player_one if attacker == 1 else player_two
+	if atk.is_multiplayer_authority():
+		atk.call("reset_super")
+	await _super_fade(1.0)
+	_fight_layer.visible = false
+	_start_minigame(which)
+	await _super_fade(0.0)
+	var result: int = await _minigame.minigame_finished
+	await _super_fade(1.0)
+	_clear_minigame()
+	_fight_layer.visible = true
+	# Host alone resolves damage from its own minigame result.
+	if not multiplayer.has_multiplayer_peer() or multiplayer.is_server():
+		_apply_super_outcome(attacker, result)
+	await _super_fade(0.0)
+	if _msub == MatchSub.SUPER:
+		_msub = MatchSub.FIGHT
+		_set_match_frozen(false)
+
+
+func _start_minigame(which: int) -> void:
+	var packed: PackedScene = load(MINIGAME_PATHS[clampi(which, 1, TOTAL_SUPERS)])
+	_minigame = packed.instantiate()
+	_minigame.name = "ActiveMinigame"   # identical NodePath on both peers for RPCs
+	_minigame.set("embedded", true)
+	_mg_layer.add_child(_minigame)
+	if multiplayer.has_multiplayer_peer() and (_hosting_active or _connected_as_client):
+		_minigame.call("begin_networked", multiplayer.is_server())
+	else:
+		_minigame.call("begin_solo")
+
+
+func _clear_minigame() -> void:
+	if _minigame != null and is_instance_valid(_minigame):
+		_minigame.queue_free()
+	_minigame = null
+
+
+func _apply_super_outcome(attacker: int, host_result: int) -> void:
+	if host_result == -1:
+		return   # draw — no damage
+	# host_result is player_one's (host's) perspective of the minigame.
+	var starter_won := (host_result == 1) if attacker == 1 else (host_result == 0)
+	var loser := _other_player(attacker)
+	var f: Node2D = player_one if loser == 1 else player_two
+	var frac := BIG_SUPER_FRACTION if starter_won else SMALL_SUPER_FRACTION
+	var dmg := int(round(frac * float(f.get("max_health"))))
+	if multiplayer.has_multiplayer_peer():
+		_rpc_super_damage.rpc(loser, dmg)
+	else:
+		f.call("apply_super_damage", dmg)
+
+
+@rpc("authority", "call_local", "reliable")
+func _rpc_super_damage(loser_pid: int, amount: int) -> void:
+	var f: Node2D = player_one if loser_pid == 1 else player_two
+	if f.is_multiplayer_authority():
+		f.call("apply_super_damage", amount)
+
+
+func _super_fade(to_alpha: float) -> void:
+	_fade_rect.visible = true
+	var tw := create_tween()
+	tw.tween_property(_fade_rect, "color:a", to_alpha, SUPER_FADE)
+	await tw.finished
+	if to_alpha <= 0.0:
+		_fade_rect.visible = false
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -1409,8 +1729,22 @@ func _update_health_bar(bar: ProgressBar, text_label: Label, current_health: int
 
 
 func _update_camera() -> void:
-	var midpoint: Vector2 = (player_one.global_position + player_two.global_position) * 0.5
-	camera.global_position = Vector2(midpoint.x, 10.0)
+	_update_fighting_camera(camera, player_one.global_position.x, player_two.global_position.x)
+
+
+# Shared fighting-game camera: zoom to keep both fighters framed, follow their
+# midpoint, and clamp the view to the stage walls so it can't scroll past them.
+static func _update_fighting_camera(cam: Camera2D, p1x: float, p2x: float) -> void:
+	var sep := absf(p2x - p1x)
+	var target_zoom := clampf(CAM_VIEW_W / (sep + CAM_MARGIN), CAM_MIN_ZOOM, CAM_MAX_ZOOM)
+	var z := lerpf(cam.zoom.x, target_zoom, CAM_LERP)
+	cam.zoom = Vector2(z, z)
+	var half_view := (CAM_VIEW_W / z) * 0.5
+	var center_x := (p1x + p2x) * 0.5
+	var min_x := -CAM_STAGE_HALF + half_view
+	var max_x := CAM_STAGE_HALF - half_view
+	var target_x := clampf(center_x, min_x, max_x) if min_x <= max_x else 0.0
+	cam.global_position = Vector2(lerpf(cam.global_position.x, target_x, CAM_LERP), CAM_Y)
 
 
 func _refresh_special_hud() -> void:
