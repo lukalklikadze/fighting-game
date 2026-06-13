@@ -42,9 +42,9 @@ const SCOTISH_PIPE_IMG := "res://assets/bagpipe.png"
 # frame 0) used to scale + ground the art.
 const PERSON_TARGET_HEIGHT := 340.0
 const PERSON_SETS := {
-	"english":  {"base": "english man",  "walk": 12, "idle": 12, "hand": 6, "leg": 8,  "hard": 16, "jump": [0, 6, 9],  "dash": 4, "fig_h": 905, "feet": 455},
-	"georgian": {"base": "georgian man", "walk": 12, "idle": 12, "hand": 5, "leg": 10, "hard": 27, "jump": [4, 14],    "dash": 9, "fig_h": 958, "feet": 466},
-	"scotish":  {"base": "scotish man",  "walk": 12, "idle": 12, "hand": 6, "leg": 10, "hard": 14, "jump": [0, 6, 17],  "dash": 9, "fig_h": 922, "feet": 449, "pipe": true},
+	"english":  {"base": "english man",  "walk": 12, "idle": 12, "hand": 6, "leg": 8,  "hard": 16, "jump": [0, 6, 9],  "dash": 3, "fig_h": 905, "feet": 455},
+	"georgian": {"base": "georgian man", "walk": 12, "idle": 12, "hand": 5, "leg": 10, "hard": 27, "jump": [4, 14],    "dash": 3, "fig_h": 958, "feet": 466},
+	"scotish":  {"base": "scotish man",  "walk": 12, "idle": 12, "hand": 6, "leg": 10, "hard": 14, "jump": [0, 6, 17],  "dash": 3, "fig_h": 922, "feet": 449, "pipe": true},
 }
 
 # Arcade (MK-style) attack tuning -- fast and committed. dur = whole-move
@@ -523,7 +523,7 @@ func _build_person_frames(info: Dictionary) -> void:
 	_add_person_anim(frames, "heavy_attack", PERSON_HARD_DIR, base, 0, hard_n - 1, 16.0, false, false)
 	_add_person_anim(frames, "air_attack", PERSON_LEG_DIR, base, 0, leg_n - 1, 16.0, false, false)
 	_add_person_anim_list(frames, "jump_start", PERSON_JUMP_DIR, base, info["jump"], 10.0, false, false)
-	_add_person_anim_list(frames, "dash", PERSON_HARD_DIR, base, [info["dash"]], 6.0, false, false)
+	_add_person_anim_list(frames, "dash", PERSON_WALK_DIR, base, [info["dash"]], 6.0, false, false)
 	_add_person_anim(frames, "idle", PERSON_IDLE_DIR, base, 0, int(info["idle"]) - 1, 9.0, true, false)
 	for still in ["slide", "hit", "death"]:
 		_add_person_anim(frames, still, PERSON_IDLE_DIR, base, 0, 0, 6.0, false, false)
