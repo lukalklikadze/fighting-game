@@ -1,0 +1,16 @@
+[gd_scene format=3 uid="uid://gbami6mkiord"]
+
+[ext_resource type="Texture2D" uid="uid://d1cqr0btyfl7q" path="res://scenes/scripts/bar_background.png" id="1_qyha7"]
+[ext_resource type="Script" uid="uid://bp7ctofnod83l" path="res://scenes/scripts/bar.gd" id="2_bar"]
+
+[node name="Node2D" type="Node2D" unique_id=756147646]
+script = ExtResource("2_bar")
+
+[node name="Sprite2D" type="Sprite2D" parent="." unique_id=449935671]
+position = Vector2(638.90826, 362.49997)
+scale = Vector2(0.6675191, 0.66944444)
+texture = ExtResource("1_qyha7")
+
+[node name="Camera2D" type="Camera2D" parent="." unique_id=449935672]
+position = Vector2(711, 308)
+zoom = Vector2(2.5, 2.5)

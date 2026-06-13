@@ -31,6 +31,9 @@ var _balls: Dictionary = {}
 var _base_scale: Dictionary = {}
 var _selected := 0
 var _chosen := -1
+var _opponent_choice := -1
+var _opponent_chosen := false
+var _advancing := false
 var _selection_enabled := false
 
 var _code_edit: LineEdit
@@ -47,6 +50,7 @@ var _join_timeout_timer := 0.0
 
 
 func _ready() -> void:
+	randomize()
 	for ball_name in BALL_ORDER:
 		var ball := get_node(NodePath(ball_name)) as Sprite2D
 		_balls[ball_name] = ball
@@ -57,7 +61,6 @@ func _ready() -> void:
 	_build_ui()
 	_connect_multiplayer_signals()
 	_update_highlight()
-	_set_status("Click START to host, or type a code and click JOIN.")
 
 
 func _process(delta: float) -> void:
@@ -110,18 +113,53 @@ func _update_highlight() -> void:
 
 
 func _choose(index: int) -> void:
+	# RANDOM resolves to a concrete fighter (avoiding the opponent's, if known)
+	# so the matchup always maps to a real trash-talk dialog.
+	if BALL_ORDER[index] == "random":
+		index = _resolve_random()
 	_chosen = index
+	# Show the resolved fighter on our seat.
+	_character_display.texture = CHAR_TEXTURES[BALL_ORDER[index]]
+	_character_display.visible = true
 	_set_status("You picked %s." % BALL_ORDER[index])
-	# Tell the other player which fighter we picked.
+	# Tell the other player which fighter we picked (already resolved).
 	if multiplayer.has_multiplayer_peer():
 		_rpc_set_opponent_choice.rpc(index)
+	_maybe_advance()
+
+
+func _resolve_random() -> int:
+	# Concrete fighters are indices 0..2 (georgian, scottish, english).
+	var pool := [0, 1, 2]
+	if _opponent_choice in pool:
+		pool.erase(_opponent_choice)
+	return pool[randi() % pool.size()]
 
 
 @rpc("any_peer", "call_remote", "reliable")
 func _rpc_set_opponent_choice(index: int) -> void:
 	index = clampi(index, 0, BALL_ORDER.size() - 1)
+	_opponent_choice = index
 	_opponent_display.texture = CHAR_TEXTURES[BALL_ORDER[index]]
 	_opponent_display.visible = true
+	_opponent_chosen = true
+	_maybe_advance()
+
+
+func _maybe_advance() -> void:
+	# Once both players have locked a fighter, head into the bar cutscene.
+	if _advancing or _chosen < 0 or not _opponent_chosen:
+		return
+	_advancing = true
+	# Carry the chosen fighters forward to the trash-talk screen.
+	MatchState.player_key = BALL_ORDER[_chosen]
+	MatchState.player_icon = CHAR_TEXTURES[BALL_ORDER[_chosen]]
+	if _opponent_choice >= 0:
+		MatchState.opponent_key = BALL_ORDER[_opponent_choice]
+		MatchState.opponent_icon = CHAR_TEXTURES[BALL_ORDER[_opponent_choice]]
+	_set_status("Both ready — entering the bar...")
+	await get_tree().create_timer(1.0).timeout
+	get_tree().change_scene_to_file("res://bar.tscn")
 
 
 func _send_choice_to(peer_id: int) -> void:
@@ -135,7 +173,7 @@ func _build_ui() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
 
-	_code_label = _make_label("ENTER A CODE TO JOIN", 16, Color(0.88, 0.94, 1.0, 1.0))
+	_code_label = _make_label("", 16, Color(0.88, 0.94, 1.0, 1.0))
 	_code_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_code_label.position = Vector2(440, 408)
 	_code_label.size = Vector2(400, 24)
@@ -257,7 +295,6 @@ func _join_game() -> void:
 	var host_ip := _parse_join_address(_code_edit.text)
 	if host_ip == "":
 		_code_edit.grab_focus()
-		_set_status("Enter a valid host code.")
 		return
 	_close_multiplayer_peer()
 	var peer := ENetMultiplayerPeer.new()
