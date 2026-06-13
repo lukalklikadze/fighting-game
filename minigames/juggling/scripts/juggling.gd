@@ -199,7 +199,6 @@ func _draw() -> void:
 	_draw_half(HALF_W, op_x, op_lean, op_ball, op_kick, op_alive, false, op_kick_right)
 	if game_on and winner == "":
 		_lbl_outlined(Vector2(38.0, 130.0), str(my_kick_count), Color.WHITE, 52)
-		_lbl(Vector2(38.0, 156.0), "kicks", Color(1, 1, 1, 0.7), 15)
 	if _countdown_text != "":
 		_lbl(Vector2(SW / 2.0, SH / 2.0), _countdown_text, Color.WHITE, 96)
 	elif winner != "":
