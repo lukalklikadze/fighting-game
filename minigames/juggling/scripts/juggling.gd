@@ -52,6 +52,7 @@ var my_ball   := Vector2.ZERO
 var my_bvel   := Vector2.ZERO
 var my_kick       := 0.0    # remaining kick animation time
 var my_kick_right := true   # which leg is swinging
+var my_kick_hit   := false  # impulse already applied this swing
 var my_alive  := true
 var my_ramp_t := 0.0
 var my_speed  := 1.0    # kick velocity multiplier; grows over time
@@ -90,7 +91,7 @@ func _ready() -> void:
 	_font = chubby
 	solo    = true
 	am_host = true
-	my_ball = Vector2(HALF_W / 2.0, GROUND_Y - 160.0)
+	my_ball = Vector2(HALF_W / 2.0, SH / 2.0)
 	my_bvel = Vector2(randf_range(-80.0, 80.0), -380.0)
 	_run_countdown()
 
@@ -124,7 +125,20 @@ func _update(delta: float) -> void:
 	elif Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): my_vx =  MOVE_SPD
 	my_x    = clamp(my_x + my_vx * delta, FIG_MIN_X, FIG_MAX_X)
 	my_lean = lerpf(my_lean, my_vx / MOVE_SPD * 0.38, delta * 9.0)
-	my_kick = max(0.0, my_kick - delta)
+	my_kick = maxf(0.0, my_kick - delta)
+
+	# ── Foot-contact kick detection (applied mid-swing when foot meets ball) ──
+	if my_kick > 0.0 and not my_kick_hit:
+		var p      := sin((1.0 - my_kick / KICK_DURATION) * PI)
+		var hip_x  := my_x
+		var hip_y  := GROUND_Y - LEG_LEN
+		var foot_x := hip_x + (16.0 + p * 56.0) * (1.0 if my_kick_right else -1.0)
+		var foot_y := hip_y + LEG_LEN * 0.78 - p * 42.0
+		if absf(my_ball.x - foot_x) < BALL_R + 20.0 and absf(my_ball.y - foot_y) < BALL_R + 26.0:
+			my_kick_hit = true
+			var dir_x := (my_ball.x - my_x) * 1.3
+			var rnd_x := randf_range(-KICK_RAND_X, KICK_RAND_X)
+			my_bvel   = Vector2(dir_x + rnd_x, KICK_VEL_Y) * my_speed
 
 	# ── Ball physics ─────────────────────────────────────────────────────────
 	my_bvel.y += GRAVITY * delta
@@ -163,13 +177,8 @@ func _input(event: InputEvent) -> void:
 
 func _kick() -> void:
 	my_kick_right = my_ball.x >= my_x
-	my_kick = KICK_DURATION
-	var dx      := absf(my_ball.x - my_x)
-	var ball_h  := GROUND_Y - my_ball.y   # distance above ground (positive = airborne)
-	if dx < KICK_RANGE_X and ball_h >= 0.0 and ball_h < KICK_RANGE_Y:
-		var dir_x := (my_ball.x - my_x) * 1.3              # kick away from body
-		var rnd_x := randf_range(-KICK_RAND_X, KICK_RAND_X)
-		my_bvel   = Vector2(dir_x + rnd_x, KICK_VEL_Y) * my_speed
+	my_kick       = KICK_DURATION
+	my_kick_hit   = false
 
 # ══════════════════════════════════ RPCs ══════════════════════════════════════
 @rpc("any_peer", "call_remote", "unreliable")
@@ -467,13 +476,9 @@ func _draw_banner() -> void:
 	var you_col  := Color("#3ddc84") if you_win else Color("#ff5555")
 	var opp_col  := Color("#ff5555") if you_win else Color("#3ddc84")
 	var fs  := 80
-	var bw  := 370.0
-	var bh  := 104.0
 	var lc  := Vector2(float(HALF_W) * 0.5, float(SH) * 0.5)
 	var rc  := Vector2(float(HALF_W) * 1.5, float(SH) * 0.5)
-	draw_rect(Rect2(lc.x - bw * 0.5, lc.y - bh * 0.5, bw, bh), Color(0, 0, 0, 0.75))
 	_lbl_outlined(lc, you_text, you_col, fs)
-	draw_rect(Rect2(rc.x - bw * 0.5, rc.y - bh * 0.5, bw, bh), Color(0, 0, 0, 0.75))
 	_lbl_outlined(rc, opp_text, opp_col, fs)
 
 
