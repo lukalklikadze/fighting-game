@@ -67,6 +67,11 @@ var _join_timeout_timer := 0.0
 
 
 func _ready() -> void:
+	# Match the fight scene: fullscreen 16:9 so the stadium art fills the screen.
+	# (Windowed/odd aspects let "expand" stretch reveal bare edges past the art;
+	# tint the clear color to the seats' navy so any sliver blends in.)
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+	RenderingServer.set_default_clear_color(Color(0.05, 0.10, 0.25, 1.0))
 	for ball_name in BALL_ORDER:
 		var ball := get_node(NodePath(ball_name)) as Sprite2D
 		_balls[ball_name] = ball
