@@ -24,6 +24,7 @@ const SMOKE_FRAMES := [
 ]
 const SMOKE_SCALE := 6.0             # 48x32 source art -> ~288x192 gust
 const SMOKE_FORWARD := 54.0          # initial offset in front of the pipe
+const SMOKE_LIFT := 44.0             # raise the smoke a little so it leaves the pipe higher
 # Travels outward to ~REACH over its lifetime so it reads as a gust blowing out.
 const SMOKE_TRAVEL_SPEED := 480.0
 
@@ -59,7 +60,7 @@ func _build_smoke() -> void:
 	_smoke.sprite_frames = frames
 	_smoke.flip_h = _dir > 0          # art faces LEFT by default -> mirror when blowing right
 	_smoke.scale = Vector2(SMOKE_SCALE, SMOKE_SCALE)
-	_smoke.position = Vector2(float(_dir) * SMOKE_FORWARD, 0.0)
+	_smoke.position = Vector2(float(_dir) * SMOKE_FORWARD, -SMOKE_LIFT)
 	add_child(_smoke)
 	_smoke.play("smoke")
 
