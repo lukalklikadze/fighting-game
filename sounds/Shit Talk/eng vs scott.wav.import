@@ -1,0 +1,24 @@
+[remap]
+
+importer="wav"
+type="AudioStreamWAV"
+uid="uid://ckylxadwrm5gc"
+path="res://.godot/imported/eng vs scott.wav-ea2e87b5ed65ed0b83c336531bcdc3ed.sample"
+
+[deps]
+
+source_file="res://sounds/Shit Talk/eng vs scott.wav"
+dest_files=["res://.godot/imported/eng vs scott.wav-ea2e87b5ed65ed0b83c336531bcdc3ed.sample"]
+
+[params]
+
+force/8_bit=false
+force/mono=false
+force/max_rate=false
+force/max_rate_hz=44100
+edit/trim=false
+edit/normalize=false
+edit/loop_mode=0
+edit/loop_begin=0
+edit/loop_end=-1
+compress/mode=2
