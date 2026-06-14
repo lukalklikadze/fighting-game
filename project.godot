@@ -16,7 +16,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 config/name="2D Fighting Game"
 config/tags=PackedStringArray("multiplayer", "fighting", "2d")
-run/main_scene="res://starter_2.tscn"
+run/main_scene="res://title.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 
 [autoload]
@@ -30,7 +30,7 @@ window/size/viewport_width=1280
 window/size/viewport_height=720
 window/size/mode=2
 window/stretch/mode="canvas_items"
-window/stretch/aspect="expand"
+window/stretch/aspect="ignore"
 
 [editor_plugins]
 

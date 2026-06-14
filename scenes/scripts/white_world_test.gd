@@ -23,6 +23,14 @@ const MINIGAME_PATHS := {
 	2: "res://minigames/beer/scenes/Beer.tscn",
 	3: "res://minigames/juggling/scenes/Juggling.tscn",
 }
+# Shown over the frozen fight for a few seconds after a minigame, by winner.
+const WIN_CARDS := {
+	"english":  preload("res://assets/england_win.png"),
+	"georgian": preload("res://assets/georgian_win.png"),
+	"scotish":  preload("res://assets/scotish_win.png"),
+	"scottish": preload("res://assets/scotish_win.png"),
+}
+const WIN_CARD_TIME := 3.0
 enum MatchSub { FIGHT, SUPER, KO }
 
 # Fighting-game camera: follow the midpoint, zoom out as the fighters separate,
@@ -1270,6 +1278,11 @@ func _run_super(which: int, attacker: int) -> void:
 	_start_minigame(which)
 	await _super_fade(0.0)
 	var result: int = await _minigame.minigame_finished
+	# A draw doesn't resolve the super — replay the minigame until someone wins.
+	while result == -1:
+		_clear_minigame()
+		_start_minigame(which)
+		result = await _minigame.minigame_finished
 	await _super_fade(1.0)
 	_clear_minigame()
 	_fight_layer.visible = true
@@ -1277,9 +1290,37 @@ func _run_super(which: int, attacker: int) -> void:
 	if not multiplayer.has_multiplayer_peer() or multiplayer.is_server():
 		_apply_super_outcome(attacker, result)
 	await _super_fade(0.0)
+	# Show the winner's card over the frozen fight for a few seconds.
+	await _show_win_card(result)
 	if _msub == MatchSub.SUPER:
 		_msub = MatchSub.FIGHT
 		_set_match_frozen(false)
+
+
+# Overlays the winning fighter's card over the (still frozen) fight. `result` is
+# from the local perspective: 1 = local won, 0 = local lost, -1 = draw.
+func _show_win_card(result: int) -> void:
+	if result != 1 and result != 0:
+		return  # draw — no winner card
+	var local_id := _local_player_id()
+	var winner_node: Node2D
+	if result == 1:
+		winner_node = player_one if local_id == 1 else player_two
+	else:
+		winner_node = player_two if local_id == 1 else player_one
+	var winner_char := String(winner_node.get_meta("character_id", ""))
+	var tex: Texture2D = WIN_CARDS.get(winner_char, null)
+	if tex == null:
+		return
+	var card := TextureRect.new()
+	card.texture = tex
+	card.set_anchors_preset(Control.PRESET_FULL_RECT)
+	card.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	card.stretch_mode = TextureRect.STRETCH_SCALE
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_mg_layer.add_child(card)
+	await get_tree().create_timer(WIN_CARD_TIME).timeout
+	card.queue_free()
 
 
 func _start_minigame(which: int) -> void:

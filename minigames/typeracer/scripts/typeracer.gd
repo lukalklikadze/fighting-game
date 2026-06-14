@@ -2,37 +2,108 @@ extends Control
 ## Online 2-player Typeracer minigame.
 ##
 ## Split screen: the LEFT panel is the local player, the RIGHT panel is the
-## remote opponent. Both peers load the same scene and connect over ENet.
-## The host picks the sentence and hands it to the client, then both race to
-## type it. Each correctly typed character turns green, a wrong key turns the
-## current character red. First to finish wins.
+## remote opponent. Each fighter types a random line from their OWN character's
+## pool (in their own language); the host picks BOTH lines length-matched so the
+## race is fair, then hands each side its line. First to finish their line wins.
+## Georgian/English fighters type Georgian text (Latin keystrokes are remapped
+## phonetically).
 
 const PORT := 9999
 
-# Sentences the host can pick from. Kept short so a race resolves quickly.
-const SENTENCES := [
+# Each fighter types a random line from their own pool (in their own language).
+const CHAR_SENTENCES := {
+	"georgian": [
+		"ცოტა სიჩუმეა და დინამოს ექიმი ბოოოოოსი",
+		"არავარ არსად სიაში, დუბლებში მე არავარ, არსად არავარ",
+		"ფეხბურთი მეტია...ვიდრე გაზაევი",
+		"ჯოტია მუს გილამჯანუქ სი ჯოღორისკუა",
+		"ფეხბურთი თურმე კუჭის აშლილობას გავს",
+		"შენთვის, შენთვის ვმღერი ზღაპრის ბოლო კეთილია",
+	],
+	"scottish": [
+		"Let's pretend, let's pretend we score a goal",
+		"Yer stick's not even touchin the ground man",
+		"Hocus pocus there's pizza on your focus",
+		"It's shite being scottish, we're the lowest of the low",
+		"What's heavier, a kilogramme of steel or feathers",
+		"We've got McGinn, Super John McGinn",
+	],
+	"english": [
+		"ქვეყნად ვერავინ შეძლებს, დედა შეაგინოს მგელს",
+		"ე ზიდან, დედაშენს დაუსიგნალე საკუარში, ბიჭო",
+		"თუ გინდა, დედა არ გაგინო, დროზე ინგლისის ჰიმნი იმღერე",
+		"მოდი აქ, შენი ლიზარაზუ დედა მოვ***ნ",
+		"აბა ვინა ვართ? დედის მ***ელები",
+		"გადაა*ვით ბიჭო, რომელ მხარეს მოდიხართ",
+		"მოიცა, ის ველოსიპედიანი კაცი სად არი",
+	],
+}
+const FALLBACK_SENTENCES := [
 	"the quick brown fox jumps over the lazy dog",
 	"pack my box with five dozen liquor jugs",
-	"sphinx of black quartz judge my vow",
-	"how vexingly quick daft zebras jump",
-	"the five boxing wizards jump quickly",
-	"bright vixens jump dozy fowl quack",
 ]
 
-# Accent colors (panel borders, headers, WINNER/LOSER messages).
-const COL_DONE := "#3ddc84"    # green accent
-const COL_ERROR := "#ff5555"   # red accent
+# Phonetic Georgian input: when typing a Georgian line, Latin keystrokes map to
+# Georgian letters (so any keyboard works; a real Georgian layout also works,
+# since those keys pass through unchanged). The 7 aspirated/extra letters use
+# Shift (uppercase Latin).
+const GEO_PHONETIC := {
+	"a": "ა", "b": "ბ", "g": "გ", "d": "დ", "e": "ე", "v": "ვ", "z": "ზ",
+	"T": "თ", "i": "ი", "k": "კ", "l": "ლ", "m": "მ", "n": "ნ", "o": "ო",
+	"p": "პ", "J": "ჟ", "r": "რ", "s": "ს", "t": "ტ", "u": "უ", "f": "ფ",
+	"q": "ქ", "R": "ღ", "y": "ყ", "S": "შ", "C": "ჩ", "c": "ც", "Z": "ძ",
+	"w": "წ", "W": "ჭ", "x": "ხ", "j": "ჯ", "h": "ჰ",
+}
 
-# Typing text — referee white: faint while untyped, bold white once typed.
-const TXT_TODO := "#ffffff70"  # not yet typed -> lighter (semi-transparent) white
-const TXT_DONE := "#ffffff"    # correctly typed -> solid white (also bold)
-const TXT_ERROR := "#ff5555"   # wrong key on the current char -> red
-const COL_CURSOR_BG := "#ffffff33" # subtle highlight behind the current char
+# Accent colors (headers, WINNER/LOSER messages) — readable on the white boards.
+const COL_DONE := "#1f9d57"    # green accent (darker so it reads on white)
+const COL_ERROR := "#d83232"   # red accent
 
-const COL_HEADER_OPP := "#c2cad6"
+# Typing text sits on the white boards: dark ink, faint until typed.
+const TXT_TODO := "#1118278c"  # not yet typed -> faint dark ink
+const TXT_DONE := "#111827"    # correctly typed -> solid dark ink
+const TXT_ERROR := "#d83232"   # wrong key on the current char -> red
+const COL_CURSOR_BG := "#11182722" # subtle dark highlight behind the current char
+
+const COL_HEADER_OPP := "#3a4252"
+
+# Georgian-capable font for the headers (the handwriting font has no Georgian glyphs).
+const GEORGIAN_FONT: FontFile = preload("res://assets/fonts/NotoSansGeorgian-Black.ttf")
+
+# White board geometry in the 720-tall canvas: the boards span ~17%–67% of the
+# height. Header floats above the board; the sentence centers inside the band.
+const BOARD_TOP_Y := 122.0
+const BOARD_BOTTOM_Y := 486.0
+const BOARD_INSET_X := 40.0
+const HEADER_Y := 16.0
+# Sentence column is inset further than the board so long lines wrap before they
+# reach the white edges (per half-panel: 640 - 2*TEXT_INSET_X wide).
+const TEXT_INSET_X := 95.0
+
+# Flip to true to outline each text region (header / sentence / progress) so the
+# exact bounds are visible in a screenshot for tuning. Leave false for play.
+const DEBUG_TEXT_BORDERS := false
+
+# Instruction card shown (over the frozen game) for a few seconds before each round.
+const INSTRUCTION_TEX: Texture2D = preload("res://assets/mini_game_instruction_1.png")
+const INSTRUCTION_W := 500.0
+const INSTRUCTION_TIME := 3.0
+
+# --- Character names (resolved from MatchSetup: which fighter each side picked) ---
+var local_char := ""    # character id of the local player
+var opp_char := ""      # character id of the opponent
+
+const CHAR_NAMES := {
+	"georgian": "ჯოტია ცაავა",
+	"english":  "ლოთი ინგლისელი",
+	"scotish":  "კაბიანი შოტლანდიელი",
+	"scottish": "კაბიანი შოტლანდიელი",
+}
 
 # --- Game state -------------------------------------------------------------
-var target := ""        # the sentence both players type
+var target := ""        # the local player's own sentence (their character)
+var opp_target := ""    # the opponent's sentence (their character)
+var _georgian_input := false  # remap Latin keys to Georgian while typing a Georgian line
 var cursor := 0         # number of characters typed correctly so far (local)
 var error := false      # is the current local character mis-keyed?
 var finished := false   # has the local player completed the sentence?
@@ -72,11 +143,9 @@ var opp_label: RichTextLabel
 var you_progress: Label
 var opp_progress: Label
 var result_label: Label   # centered countdown (3-2-1-GO)
+var _instruction: TextureRect   # instruction card shown before the round
 var you_result: Label     # WINNER/LOSER over the player's panel
 var opp_result: Label     # WINNER/LOSER over the opponent's panel
-
-
-const PitchBackground := preload("res://minigames/typeracer/scripts/pitch_background.gd")
 
 
 func _ready() -> void:
@@ -98,8 +167,14 @@ func _ready() -> void:
 	hand_theme.default_font = hand_font
 	theme = hand_theme
 
-	# Football-pitch background, drawn behind everything else.
-	add_child(PitchBackground.new())
+	# Stadium background art (two white boards for the two players), behind all.
+	var bg := TextureRect.new()
+	bg.texture = preload("res://assets/type_background.png")
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg.stretch_mode = TextureRect.STRETCH_SCALE
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(bg)
 
 	_build_game_ui()
 	result_label.visible = false
@@ -115,14 +190,14 @@ func begin_solo() -> void:
 
 
 # Networked embedded entry: runs over the fight's existing peer (no own peer).
-# The host picks the sentence and starts both via the authority RPC; the client
-# just waits for it. First to finish wins; a timeout forces a result.
+# The host picks BOTH lines (length-matched) and starts both via the authority
+# RPC; the client just waits for it. First to finish wins; timeout forces a result.
 func begin_networked(is_host: bool) -> void:
 	solo = false
 	networked = true
 	_net_elapsed = 0.0
 	if is_host:
-		start_game.rpc(SENTENCES[randi() % SENTENCES.size()])
+		_host_start()
 
 
 func _emit_embedded_result(result: int) -> void:
@@ -161,10 +236,9 @@ func _on_join_pressed() -> void:
 
 
 func _on_peer_connected(_id: int) -> void:
-	# Only the host reacts: choose the sentence and start the match for both.
+	# Only the host reacts: pick both lines and start the match for both.
 	if multiplayer.is_server():
-		var text: String = SENTENCES[randi() % SENTENCES.size()]
-		start_game.rpc(text)
+		_host_start()
 
 
 func _on_peer_disconnected(_id: int) -> void:
@@ -186,23 +260,57 @@ func _on_connection_failed() -> void:
 #  Match flow (RPCs)
 # ===========================================================================
 
-# Host hands the sentence to everyone (including itself) and starts the match.
+# Host picks both fighters' lines (length-matched) and starts the match for all.
+# On the host local_char is Player 1, opp_char is Player 2.
+func _host_start() -> void:
+	var pair := _matched_pair(local_char, opp_char)
+	start_game.rpc(pair[0], pair[1])
+
+
+# Host hands everyone both lines (p1 = host, p2 = client) and starts the round.
 @rpc("authority", "call_local", "reliable")
-func start_game(text: String) -> void:
-	_begin_match(text)
+func start_game(p1_text: String, p2_text: String) -> void:
+	var is_host := not multiplayer.has_multiplayer_peer() or multiplayer.is_server()
+	if is_host:
+		_begin_match(p1_text, p2_text)
+	else:
+		_begin_match(p2_text, p1_text)
 
 
 # Start the solo practice match against the bot (no networking).
 func _on_solo_pressed() -> void:
 	solo = true
-	_begin_match(SENTENCES[randi() % SENTENCES.size()])
+	var pair := _matched_pair(local_char, opp_char)
+	_begin_match(pair[0], pair[1])
 
 
-# Shared match setup: reset state, run a synced 3-2-1-GO countdown, then race.
-# Both peers run this locally at nearly the same time, so the countdown stays
-# in sync without extra messages.
-func _begin_match(text: String) -> void:
-	target = text
+func _pool_for(char_id: String) -> Array:
+	var key := "scottish" if char_id == "scotish" else char_id
+	return CHAR_SENTENCES.get(key, FALLBACK_SENTENCES)
+
+
+func _pick_sentence(char_id: String) -> String:
+	var pool := _pool_for(char_id)
+	return String(pool[randi() % pool.size()])
+
+
+# Pick a random line for a_char, then the closest-length line(s) from b_char's
+# pool (randomised among the nearest few) so both sides type similar lengths.
+func _matched_pair(a_char: String, b_char: String) -> Array:
+	var a := _pick_sentence(a_char)
+	var b_pool := _pool_for(b_char).duplicate()
+	var target_len := a.length()
+	b_pool.sort_custom(func(x, y):
+		return absi(String(x).length() - target_len) < absi(String(y).length() - target_len))
+	var n: int = mini(3, b_pool.size())
+	return [a, String(b_pool[randi() % n])]
+
+
+# Match setup with both lines already decided (my_text local, opp_text opponent).
+func _begin_match(my_text: String, opp_text: String) -> void:
+	target = my_text
+	opp_target = opp_text
+	_georgian_input = _is_georgian(local_char)
 	cursor = 0
 	error = false
 	finished = false
@@ -218,13 +326,18 @@ func _begin_match(text: String) -> void:
 	_render_you()
 	_render_opponent()
 
+	# Instruction card over the frozen game for a few seconds, then the countdown.
+	_instruction.visible = true
+	await get_tree().create_timer(INSTRUCTION_TIME).timeout
+	_instruction.visible = false
+
 	for n in [3, 2, 1]:
 		result_label.text = str(n)
-		result_label.add_theme_color_override("font_color", Color("#ffffff"))
+		result_label.add_theme_color_override("font_color", Color.BLACK)
 		result_label.visible = true
 		await get_tree().create_timer(1.0).timeout
 	result_label.text = "GO!"
-	result_label.add_theme_color_override("font_color", Color(COL_DONE))
+	result_label.add_theme_color_override("font_color", Color.BLACK)
 	await get_tree().create_timer(0.5).timeout
 	result_label.visible = false
 	game_active = true
@@ -238,9 +351,9 @@ func _process(delta: float) -> void:
 	if not solo or not game_active or opp_finished:
 		return
 	bot_progress += delta * BOT_SPEED
-	opp_cursor = min(int(bot_progress), target.length())
+	opp_cursor = min(int(bot_progress), opp_target.length())
 	_render_opponent()
-	if opp_cursor >= target.length():
+	if opp_cursor >= opp_target.length():
 		opp_finished = true
 		if finished:
 			_show_draw()  # both finished in the same frame
@@ -256,9 +369,12 @@ func _process_net_timeout(delta: float) -> void:
 	_net_elapsed += delta
 	if not multiplayer.is_server() or _net_elapsed < MAX_ROUND_TIME:
 		return
-	if cursor == opp_cursor:
+	# Sentences differ in length, so compare fraction completed, not raw chars.
+	var mine := float(cursor) / maxf(1.0, float(target.length()))
+	var theirs := float(opp_cursor) / maxf(1.0, float(opp_target.length()))
+	if abs(mine - theirs) < 0.001:
 		set_result.rpc(0)
-	elif cursor > opp_cursor:
+	elif mine > theirs:
 		set_result.rpc(multiplayer.get_unique_id())
 	else:
 		var peers := multiplayer.get_peers()
@@ -298,9 +414,10 @@ func _show_draw() -> void:
 func _restart_on_draw() -> void:
 	await get_tree().create_timer(2.0).timeout
 	if solo:
-		_begin_match(SENTENCES[randi() % SENTENCES.size()])
+		var pair := _matched_pair(local_char, opp_char)
+		_begin_match(pair[0], pair[1])
 	elif multiplayer.is_server():
-		start_game.rpc(SENTENCES[randi() % SENTENCES.size()])
+		_host_start()
 
 
 func _set_panel_result(label: Label, is_winner: bool) -> void:
@@ -372,6 +489,9 @@ func _input(event: InputEvent) -> void:
 	var ch := char(key.unicode)
 	if key.unicode == 0 or ch == "":
 		return # not a printable character (shift, ctrl, arrows, etc.)
+	# Georgian line: translate Latin keystrokes to Georgian letters.
+	if _georgian_input and GEO_PHONETIC.has(ch):
+		ch = GEO_PHONETIC[ch]
 
 	var expected := target.substr(cursor, 1)
 	if ch == expected:
@@ -406,13 +526,13 @@ func _after_local_change() -> void:
 # ===========================================================================
 
 func _render_you() -> void:
-	you_label.text = _build_bbcode(cursor, error, true)
+	you_label.text = _build_bbcode(target, cursor, error, true)
 	you_progress.text = "%d / %d" % [cursor, target.length()]
 
 
 func _render_opponent() -> void:
-	opp_label.text = _build_bbcode(opp_cursor, opp_error, false)
-	opp_progress.text = "%d / %d" % [opp_cursor, target.length()]
+	opp_label.text = _build_bbcode(opp_target, opp_cursor, opp_error, false)
+	opp_progress.text = "%d / %d" % [opp_cursor, opp_target.length()]
 
 
 # Builds the per-character text for one panel, centered. Same glyph size
@@ -420,10 +540,10 @@ func _render_opponent() -> void:
 #   [0, c)  -> solid white (typed)
 #   c       -> red if error, else the current char (faint white, highlighted)
 #   (c, n)  -> faint white (not yet typed)
-func _build_bbcode(c: int, e: bool, show_cursor: bool) -> String:
+func _build_bbcode(text: String, c: int, e: bool, show_cursor: bool) -> String:
 	var out := ""
-	for i in target.length():
-		var ch := target.substr(i, 1)
+	for i in text.length():
+		var ch := text.substr(i, 1)
 		if i < c:
 			out += "[color=%s]%s[/color]" % [TXT_DONE, ch]
 		elif i == c:
@@ -497,7 +617,23 @@ func _build_connect_ui() -> void:
 	box.add_child(status_label)
 
 
+# Work out which fighter is on each side (host = Player 1 = p1_choice).
+func _resolve_chars() -> void:
+	var is_host := not multiplayer.has_multiplayer_peer() or multiplayer.is_server()
+	local_char = String(MatchSetup.p1_choice if is_host else MatchSetup.p2_choice)
+	opp_char = String(MatchSetup.p2_choice if is_host else MatchSetup.p1_choice)
+
+
+func _char_name(id: String) -> String:
+	return CHAR_NAMES.get(id, id)
+
+
+func _is_georgian(id: String) -> bool:
+	return id == "georgian" or id == "english"
+
+
 func _build_game_ui() -> void:
+	_resolve_chars()
 	game_ui = Control.new()
 	game_ui.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	game_ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -508,13 +644,13 @@ func _build_game_ui() -> void:
 	split.add_theme_constant_override("separation", 0)
 	game_ui.add_child(split)
 
-	var you_panel := _make_panel("YOU", true)
+	var you_panel := _make_panel(_char_name(local_char), true)
 	split.add_child(you_panel[0])
 	you_label = you_panel[1]
 	you_progress = you_panel[2]
 	you_result = you_panel[3]
 
-	var opp_panel := _make_panel("OPPONENT", false)
+	var opp_panel := _make_panel(_char_name(opp_char), false)
 	split.add_child(opp_panel[0])
 	opp_label = opp_panel[1]
 	opp_progress = opp_panel[2]
@@ -529,6 +665,23 @@ func _build_game_ui() -> void:
 	result_label.add_theme_font_size_override("font_size", 96)
 	game_ui.add_child(result_label)
 
+	_instruction = _make_instruction(INSTRUCTION_TEX)
+	game_ui.add_child(_instruction)
+
+
+func _make_instruction(tex: Texture2D) -> TextureRect:
+	var card := TextureRect.new()
+	card.texture = tex
+	card.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	card.stretch_mode = TextureRect.STRETCH_SCALE
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var w := INSTRUCTION_W
+	var h := w * float(tex.get_height()) / float(tex.get_width())
+	card.position = Vector2((1280.0 - w) * 0.5, (720.0 - h) * 0.5)
+	card.size = Vector2(w, h)
+	card.visible = false
+	return card
+
 
 # Returns [panel_root, text_label, progress_label, result_label].
 func _make_panel(header: String, is_you: bool) -> Array:
@@ -536,32 +689,46 @@ func _make_panel(header: String, is_you: bool) -> Array:
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
-	# Transparent panel — the pitch shows through undimmed.
+	# Transparent panel — the background art shows through undimmed.
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0, 0, 0, 0)
-	style.set_content_margin_all(28)
 	panel.add_theme_stylebox_override("panel", style)
 
-	# Inner Control so we can overlay the result message on top of the content.
+	# Inner Control fills this half of the screen; children are placed by anchor
+	# so the header floats up top while the sentence centers inside the board.
 	var inner := Control.new()
 	panel.add_child(inner)
-
-	var col := VBoxContainer.new()
-	col.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	col.add_theme_constant_override("separation", 18)
-	inner.add_child(col)
 
 	var head := Label.new()
 	head.text = header
 	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	head.add_theme_font_size_override("font_size", 28)
-	head.add_theme_color_override("font_color", Color(COL_DONE) if is_you else Color(COL_HEADER_OPP))
-	col.add_child(head)
+	head.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	head.offset_top = HEADER_Y
+	head.offset_bottom = HEADER_Y + 60
+	head.add_theme_font_override("font", GEORGIAN_FONT)
+	head.add_theme_font_size_override("font_size", 36)
+	head.add_theme_color_override("font_color", Color.BLACK)
+	inner.add_child(head)
+	_add_debug_border(inner, head, Color(0, 0.6, 1))
 
-	# Expanding spacers above/below center the sentence vertically in the panel.
+	# Band = the white board's interior. Expanding spacers center the sentence
+	# vertically inside the band; the text fills the band width so it wraps.
+	var band := VBoxContainer.new()
+	band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	band.anchor_left = 0.0
+	band.anchor_top = 0.0
+	band.anchor_right = 1.0
+	band.anchor_bottom = 0.0
+	band.offset_left = TEXT_INSET_X
+	band.offset_right = -TEXT_INSET_X
+	band.offset_top = BOARD_TOP_Y
+	band.offset_bottom = BOARD_BOTTOM_Y
+	inner.add_child(band)
+	_add_debug_border(inner, band, Color(1, 0, 0))
+
 	var spacer_top := Control.new()
 	spacer_top.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	col.add_child(spacer_top)
+	band.add_child(spacer_top)
 
 	var text := RichTextLabel.new()
 	text.bbcode_enabled = true
@@ -570,27 +737,40 @@ func _make_panel(header: String, is_you: bool) -> Array:
 	text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	text.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	text.add_theme_font_override("normal_font", hand_font)
+	# Georgian lines need the Georgian font; Latin (scottish) keeps the handwriting look.
+	var side_char: String = local_char if is_you else opp_char
+	text.add_theme_font_override("normal_font", GEORGIAN_FONT if _is_georgian(side_char) else hand_font)
 	text.add_theme_font_size_override("normal_font_size", 32)
-	# Dark outline keeps the white text legible over the bright grass.
-	text.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.7))
-	text.add_theme_constant_override("outline_size", 6)
-	col.add_child(text)
+	# Light outline keeps the dark ink crisp on the white board.
+	text.add_theme_color_override("font_outline_color", Color(1, 1, 1, 0.85))
+	text.add_theme_constant_override("outline_size", 4)
+	band.add_child(text)
 
 	var spacer_bottom := Control.new()
 	spacer_bottom.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	col.add_child(spacer_bottom)
+	band.add_child(spacer_bottom)
 
 	var progress := Label.new()
 	progress.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	progress.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	progress.offset_top = BOARD_BOTTOM_Y - 46
+	progress.offset_bottom = BOARD_BOTTOM_Y - 6
 	progress.add_theme_font_size_override("font_size", 22)
 	progress.add_theme_color_override("font_color", Color(COL_HEADER_OPP))
-	col.add_child(progress)
+	inner.add_child(progress)
+	_add_debug_border(inner, progress, Color(1, 0.8, 0))
 
-	# Per-panel WINNER/LOSER overlay, centered over this side of the screen.
+	# Per-panel WINNER/LOSER overlay, centered over the white board.
 	var overlay := CenterContainer.new()
-	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.anchor_left = 0.0
+	overlay.anchor_top = 0.0
+	overlay.anchor_right = 1.0
+	overlay.anchor_bottom = 0.0
+	overlay.offset_left = BOARD_INSET_X
+	overlay.offset_right = -BOARD_INSET_X
+	overlay.offset_top = BOARD_TOP_Y
+	overlay.offset_bottom = BOARD_BOTTOM_Y
 	inner.add_child(overlay)
 
 	# Transparent wrapper (no background) used only to toggle the message.
@@ -601,9 +781,32 @@ func _make_panel(header: String, is_you: bool) -> Array:
 
 	var result := Label.new()
 	result.add_theme_font_size_override("font_size", 80)
-	# Dark outline keeps the message readable over the grass (no solid box).
-	result.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
-	result.add_theme_constant_override("outline_size", 12)
+	# Light outline keeps the WINNER/LOSER message readable on the white board.
+	result.add_theme_color_override("font_outline_color", Color(1, 1, 1, 0.9))
+	result.add_theme_constant_override("outline_size", 10)
 	result_box.add_child(result)
 
 	return [panel, text, progress, result]
+
+
+# Draws a thin colored outline matching another Control's rect, for visually
+# tuning where each text region sits. No-op unless DEBUG_TEXT_BORDERS is true.
+func _add_debug_border(parent: Control, target: Control, color: Color) -> void:
+	if not DEBUG_TEXT_BORDERS:
+		return
+	var border := Panel.new()
+	border.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	border.anchor_left = target.anchor_left
+	border.anchor_top = target.anchor_top
+	border.anchor_right = target.anchor_right
+	border.anchor_bottom = target.anchor_bottom
+	border.offset_left = target.offset_left
+	border.offset_top = target.offset_top
+	border.offset_right = target.offset_right
+	border.offset_bottom = target.offset_bottom
+	var s := StyleBoxFlat.new()
+	s.bg_color = Color(0, 0, 0, 0)
+	s.border_color = color
+	s.set_border_width_all(2)
+	border.add_theme_stylebox_override("panel", s)
+	parent.add_child(border)

@@ -1,6 +1,13 @@
-[gd_scene load_steps=2 format=3 uid="uid://juggling_scene_01"]
+[gd_scene format=3 uid="uid://n1pp8iqdga7u"]
 
-[ext_resource type="Script" path="res://minigames/juggling/scripts/juggling.gd" id="1_jug"]
+[ext_resource type="Script" uid="uid://bj24rd06wnbj5" path="res://minigames/juggling/scripts/juggling.gd" id="1_jug"]
+[ext_resource type="Texture2D" uid="uid://chvhk0tymo0hl" path="res://assets/juggle_back.png" id="2_nhgyl"]
 
-[node name="Juggling" type="Node2D"]
+[node name="Juggling" type="Node2D" unique_id=1575412742]
 script = ExtResource("1_jug")
+
+[node name="back" type="Sprite2D" parent="." unique_id=471830182]
+z_index = -1
+position = Vector2(644, 364)
+scale = Vector2(0.67037034, 0.6703704)
+texture = ExtResource("2_nhgyl")

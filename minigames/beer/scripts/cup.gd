@@ -1,14 +1,24 @@
 extends Control
-## A glass beer mug that fills with beer. `fill` is 0..1 (brim); >1 spills.
+## A glass beer mug (sprite) that fills with beer. `fill` is 0..1 (brim); >1 spills.
+## The beer is drawn behind the translucent glass image so it shows through; on a
+## real spill the empty mug swaps to the overflowing one.
+
+const CUP_TEX:       Texture2D = preload("res://assets/beer_cup.png")
+const CUP_SPILL_TEX: Texture2D = preload("res://assets/beer_cup_filled.png")
+
+# Beer interior within the (square) cup image, as fractions of the drawn size.
+const INT_L   := 0.31   # interior left edge
+const INT_R   := 0.66   # interior right edge (excludes the handle)
+const INT_TOP := 0.15   # brim — beer top when fill == 1 (finish line)
+const INT_BOT := 0.727  # base — beer bottom (the inner base surface / red line)
+
+const FOAM_ZONE := 0.10   # grace above the brim before the mug visibly overflows
 
 const AMBER_TOP  := Color(0.95, 0.72, 0.12, 1.0)
 const AMBER_BOT  := Color(0.68, 0.40, 0.02, 1.0)
 const FOAM_WHITE := Color(0.97, 0.95, 0.88, 1.0)
 const FOAM_CREAM := Color(0.88, 0.83, 0.72, 1.0)
-const GLASS_LINE := Color(0.88, 0.93, 1.0, 0.9)
-const GLASS_TINT := Color(0.8, 0.9, 1.0, 0.07)
-const GLASS_HI   := Color(1.00, 1.00, 1.00, 0.55)
-const BRIM       := Color(1, 1, 1, 0.65)
+const BRIM       := Color(1, 1, 1, 0.5)
 
 var fill := 0.0
 
@@ -23,73 +33,51 @@ func _draw() -> void:
 	if s.x <= 0.0 or s.y <= 0.0:
 		return
 
-	var cw: float = minf(s.x * 0.5, 200.0)
-	var ch: float = minf(s.y * 0.55, 300.0)
-	var x  := (s.x - cw) * 0.5 - 18.0
-	var y  := (s.y - ch) * 0.5
-	var m  := 12.0
-	var ix := x + m
-	var iw := cw - 2.0 * m
-	var brim_y := y + 5.0
-	var base_y := y + ch - m
+	# Square cup image, centred in the control.
+	var side: float = minf(s.x, s.y)
+	var rx := (s.x - side) * 0.5
+	var ry := (s.y - side) * 0.5
+	var spilled := fill > 1.0 + FOAM_ZONE
+
+	# Interior rect (screen space) where the beer sits.
+	var ix     := rx + side * INT_L
+	var iright := rx + side * INT_R
+	var iw     := iright - ix
+	var brim_y := ry + side * INT_TOP
+	var base_y := ry + side * INT_BOT
 	var ih     := base_y - brim_y
 
 	var f: float = clampf(fill, 0.0, 1.0)
-	var beer_h  := ih * f
-	var beer_y  := base_y - beer_h
+	var beer_h := ih * f
+	var beer_y := base_y - beer_h
 
-	# Handle (drawn behind the body)
-	var hr  := ch * 0.2
-	var ang := PI / 3.0
-	var hc  := Vector2(x + cw - hr * 0.5, y + ch * 0.46)
-	draw_arc(hc, hr, -ang, ang, 24, GLASS_LINE, 14.0)
-
-	# Body tint
-	draw_rect(Rect2(x, y, cw, ch), GLASS_TINT)
-
-	# Beer fill — gradient top to bottom
+	# Beer fill (behind the glass) — gradient top to bottom.
 	if beer_h > 0.0:
 		draw_polygon(
 			PackedVector2Array([
-				Vector2(ix,      beer_y),
-				Vector2(ix + iw, beer_y),
-				Vector2(ix + iw, base_y),
-				Vector2(ix,      base_y),
+				Vector2(ix,     beer_y),
+				Vector2(iright, beer_y),
+				Vector2(iright, base_y),
+				Vector2(ix,     base_y),
 			]),
 			PackedColorArray([AMBER_TOP, AMBER_TOP, AMBER_BOT, AMBER_BOT]))
 
-	# Foam head
+	# Foam head — also behind the glass.
 	if fill > 0.015:
 		_draw_foam(ix, iw, beer_y, brim_y)
 
-	# Mug facets
-	for k in range(1, 4):
-		var lx := ix + iw * float(k) / 4.0
-		draw_line(Vector2(lx, brim_y), Vector2(lx, base_y), Color(1, 1, 1, 0.06), 2.0)
+	# Glass mug sprite on top — swaps to the overflowing mug on a real spill.
+	var tex := CUP_SPILL_TEX if spilled else CUP_TEX
+	draw_texture_rect(tex, Rect2(rx, ry, side, side), false)
 
-	# Brim target line
+	# Brim target line (aim here) — subtle, over the glass.
 	_dashed_line(ix, brim_y, iw, BRIM)
-
-	# Spill (only beyond the natural foam zone)
-	const FOAM_ZONE := 0.10
-	if fill > 1.0 + FOAM_ZONE:
-		var over: float = minf(fill - 1.0 - FOAM_ZONE, 0.4)
-		var oh := ih * over + 8.0
-		draw_rect(Rect2(ix - 6.0, brim_y - oh, iw + 12.0, oh),
-				Color(FOAM_WHITE.r, FOAM_WHITE.g, FOAM_WHITE.b, 0.92))
-
-	# Glass walls + base lip
-	draw_rect(Rect2(x, y, cw, ch), GLASS_LINE, false, 5.0)
-	draw_rect(Rect2(x - 4.0, y + ch - 10.0, cw + 8.0, 10.0), GLASS_LINE, false, 5.0)
-
-	# Glass left-edge highlight
-	draw_line(Vector2(x + 6.0, y + 8.0), Vector2(x + 6.0, y + ch - 12.0), GLASS_HI, 5.0)
 
 
 func _draw_foam(ix: float, iw: float, beer_y: float, brim_y: float) -> void:
 	var foam_h   := minf(24.0, (beer_y - brim_y) + 16.0)
 	foam_h       = maxf(foam_h, 10.0)
-	# Never draw foam above the brim — that only happens during a real spill
+	# Never draw foam above the brim — that only happens during a real spill.
 	var foam_top := maxf(beer_y - foam_h, brim_y)
 
 	draw_rect(Rect2(ix, foam_top + foam_h * 0.38, iw, foam_h * 0.62), FOAM_CREAM)

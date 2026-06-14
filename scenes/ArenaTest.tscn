@@ -1,11 +1,12 @@
 [gd_scene format=3 uid="uid://cdaxw3yo1dnhc"]
 
-[ext_resource type="Script" path="res://scenes/scripts/arena_test.gd" id="1_arena"]
+[ext_resource type="Script" uid="uid://cx1rijsf61un" path="res://scenes/scripts/arena_test.gd" id="1_arena"]
 [ext_resource type="PackedScene" path="res://characters/scenes/Player.tscn" id="2_player"]
-[ext_resource type="Script" path="res://scenes/scripts/arena_background.gd" id="3_bg"]
+[ext_resource type="Texture2D" uid="uid://ccd0nrs5jocmx" path="res://assets/fight_back.png" id="2_sgota"]
+[ext_resource type="Script" uid="uid://3726l6t3p21j" path="res://scenes/scripts/arena_background.gd" id="3_bg"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_ground"]
-size = Vector2(2000, 60)
+size = Vector2(2223, 60)
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_wall"]
 size = Vector2(60, 620)
@@ -14,57 +15,48 @@ size = Vector2(60, 620)
 normal = Vector2(0, 1)
 distance = -300.0
 
-[node name="ArenaTest" type="Node2D"]
+[node name="ArenaTest" type="Node2D" unique_id=6630095]
 script = ExtResource("1_arena")
 
-[node name="ArenaBackground" type="Node2D" parent="."]
+[node name="background" type="Sprite2D" parent="." unique_id=447922763]
+position = Vector2(-24, -11.000001)
+scale = Vector2(0.76805556, 0.76805556)
+texture = ExtResource("2_sgota")
+
+[node name="ArenaBackground" type="Node2D" parent="." unique_id=1556189445]
 z_index = -5
 script = ExtResource("3_bg")
 
-[node name="ArenaVisuals" type="Node2D" parent="."]
+[node name="WorldCollision" type="StaticBody2D" parent="." unique_id=1281779086]
 
-[node name="GroundVisual" type="Polygon2D" parent="ArenaVisuals"]
-color = Color(0, 0, 0, 1)
-polygon = PackedVector2Array(-1000, 232, 1000, 232, 1000, 240, -1000, 240)
-
-[node name="LeftWallVisual" type="Polygon2D" parent="ArenaVisuals"]
-color = Color(0, 0, 0, 1)
-polygon = PackedVector2Array(-916, -320, -900, -320, -900, 240, -916, 240)
-
-[node name="RightWallVisual" type="Polygon2D" parent="ArenaVisuals"]
-color = Color(0, 0, 0, 1)
-polygon = PackedVector2Array(900, -320, 916, -320, 916, 240, 900, 240)
-
-[node name="WorldCollision" type="StaticBody2D" parent="."]
-
-[node name="GroundCollision" type="CollisionShape2D" parent="WorldCollision"]
-position = Vector2(0, 262)
+[node name="GroundCollision" type="CollisionShape2D" parent="WorldCollision" unique_id=649594122]
+position = Vector2(-27.5, 310)
 shape = SubResource("RectangleShape2D_ground")
 
-[node name="LeftWallCollision" type="CollisionShape2D" parent="WorldCollision"]
-position = Vector2(-930, -50)
+[node name="LeftWallCollision" type="CollisionShape2D" parent="WorldCollision" unique_id=1799346409]
+position = Vector2(-1130, -28)
 shape = SubResource("RectangleShape2D_wall")
 
-[node name="RightWallCollision" type="CollisionShape2D" parent="WorldCollision"]
-position = Vector2(930, -50)
+[node name="RightWallCollision" type="CollisionShape2D" parent="WorldCollision" unique_id=1861022970]
+position = Vector2(1082, -38)
 shape = SubResource("RectangleShape2D_wall")
 
-[node name="CeilingCollision" type="CollisionShape2D" parent="WorldCollision"]
+[node name="CeilingCollision" type="CollisionShape2D" parent="WorldCollision" unique_id=783303248]
 shape = SubResource("WorldBoundaryShape2D_ceiling")
 
-[node name="Players" type="Node2D" parent="."]
+[node name="Players" type="Node2D" parent="." unique_id=779067163]
 
-[node name="PlayerOne" parent="Players" instance=ExtResource("2_player")]
+[node name="PlayerOne" parent="Players" unique_id=694859139 instance=ExtResource("2_player")]
 position = Vector2(-300, 232)
 character_key = "scotish"
 
-[node name="PlayerTwo" parent="Players" instance=ExtResource("2_player")]
+[node name="PlayerTwo" parent="Players" unique_id=1323269616 instance=ExtResource("2_player")]
 position = Vector2(300, 232)
 player_id = 2
 accept_local_input = false
 bot_enabled = true
 character_key = "english"
 
-[node name="Camera2D" type="Camera2D" parent="."]
+[node name="Camera2D" type="Camera2D" parent="." unique_id=1716690690]
 position = Vector2(0, 10)
 zoom = Vector2(0.9, 0.9)

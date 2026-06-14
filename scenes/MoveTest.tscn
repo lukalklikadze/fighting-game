@@ -1,4 +1,4 @@
-[gd_scene load_steps=8 format=3 uid="uid://b2movetest0001"]
+[gd_scene format=3 uid="uid://dnktjyl1dyvnk"]
 
 [ext_resource type="Script" path="res://scenes/scripts/move_test.gd" id="1_move"]
 [ext_resource type="PackedScene" path="res://characters/scenes/Player.tscn" id="2_player"]

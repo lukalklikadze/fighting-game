@@ -1,8 +1,9 @@
 [gd_scene format=3 uid="uid://dbd2wgqxxkhw1"]
 
-[ext_resource type="Script" path="res://scenes/scripts/white_world_test.gd" id="1_world"]
+[ext_resource type="Script" uid="uid://c14od2djwukgt" path="res://scenes/scripts/white_world_test.gd" id="1_world"]
+[ext_resource type="Texture2D" uid="uid://ccd0nrs5jocmx" path="res://assets/fight_back.png" id="2_e84ua"]
 [ext_resource type="PackedScene" path="res://characters/scenes/Player.tscn" id="2_player"]
-[ext_resource type="Script" path="res://scenes/scripts/arena_background.gd" id="3_bg"]
+[ext_resource type="Script" uid="uid://3726l6t3p21j" path="res://scenes/scripts/arena_background.gd" id="3_bg"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_ground"]
 size = Vector2(2000, 60)
@@ -16,6 +17,11 @@ distance = -300.0
 
 [node name="WhiteWorldTest" type="Node2D" unique_id=1890060856]
 script = ExtResource("1_world")
+
+[node name="background" type="Sprite2D" parent="." unique_id=939941813]
+position = Vector2(-2, 2.000002)
+scale = Vector2(0.9101851, 0.91018516)
+texture = ExtResource("2_e84ua")
 
 [node name="ArenaBackground" type="Node2D" parent="." unique_id=1701662406]
 z_index = -5
