@@ -42,3 +42,7 @@ bind_mode=0
 custom_bind_ip=""
 port_override_enabled=false
 port_override=6550
+
+[rendering]
+
+textures/vram_compression/import_etc2_astc=true
