@@ -31,16 +31,24 @@ const MATCHUP_DIALOGS := {
 	"georgian|scotish": ["scotish_to_georgian", "georgian_to_scotish"],
 }
 
-# Voice clip played when a given dialog image appears; the scene then holds for
-# the clip's length so the line can finish before the fight starts.
+# Voice clip for the FIRST line (monologue). The answer waits until it finishes.
+const MONOLOGUE_SFX := {
+	"scotish_to_georgian": preload("res://sounds/Shit Talk/scott.wav"),
+	"scotish_to_english": preload("res://sounds/Shit Talk/scott.wav"),
+}
+
+# Voice clip for the SECOND line (answer); the scene then holds for the clip's
+# length so the line can finish before the fight starts.
 const DIALOG_SFX := {
 	"georgian_to_scotish": preload("res://sounds/Shit Talk/jotia vs scot.wav"),
 	"georgian_to_english": preload("res://sounds/Shit Talk/jotia vs eng.wav"),
 }
 const ANSWER_TAIL := 1.0   # hold after the answer when there's no clip
+const MONOLOGUE_INTRO_DELAY := 1.0   # beat before the first dialogue box appears
 
 var _monologue: TextureRect
 var _answer: TextureRect
+var _monologue_token := ""
 var _answer_token := ""
 var _sfx: AudioStreamPlayer
 
@@ -72,7 +80,8 @@ func _build_scene() -> void:
 	var files := _matchup_dialog_files()
 
 	# First line (monologue) up top, the answer down at the bottom.
-	_monologue = _make_dialog(layer, files[0] if files.size() > 0 else "")
+	_monologue_token = files[0] if files.size() > 0 else ""
+	_monologue = _make_dialog(layer, _monologue_token)
 	_monologue.position = Vector2(110, 70)
 
 	_answer_token = files[1] if files.size() > 1 else ""
@@ -111,18 +120,30 @@ func _make_dialog(parent: Node, file_token: String) -> TextureRect:
 
 
 func _reveal() -> void:
-	# Monologue is on screen from the start; the answer appears after a beat.
-	_monologue.modulate.a = 1.0
+	# Both boxes start hidden; the monologue fades in after a short beat, then its
+	# voice plays, then the answer drops in once the monologue finishes.
+	_monologue.modulate.a = 0.0
 	_answer.modulate.a = 0.0
-	# If the answer has a voice clip, hold the scene for its full length.
+	var mono_clip: AudioStream = MONOLOGUE_SFX.get(_monologue_token, null)
+	var lead: float = mono_clip.get_length() if mono_clip != null else MONOLOGUE_TIME
 	var clip: AudioStream = DIALOG_SFX.get(_answer_token, null)
 	var tail: float = clip.get_length() if clip != null else ANSWER_TAIL
 	var tween := create_tween()
-	tween.tween_interval(MONOLOGUE_TIME)
+	tween.tween_interval(MONOLOGUE_INTRO_DELAY)
+	tween.tween_property(_monologue, "modulate:a", 1.0, 0.4)
+	tween.tween_callback(_play_monologue_clip)
+	tween.tween_interval(lead)
 	tween.tween_property(_answer, "modulate:a", 1.0, 0.4)
 	tween.tween_callback(_play_answer_clip)
 	tween.tween_interval(tail)
 	tween.tween_callback(_go_to_fight)
+
+
+func _play_monologue_clip() -> void:
+	var clip: AudioStream = MONOLOGUE_SFX.get(_monologue_token, null)
+	if clip != null:
+		_sfx.stream = clip
+		_sfx.play()
 
 
 func _play_answer_clip() -> void:

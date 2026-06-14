@@ -63,6 +63,12 @@ var _result_emitted := false
 var _net_elapsed := 0.0
 const MAX_ROUND_TIME := 12.0   # safety timeout: an idle pour auto-locks so it resolves
 
+# Start handshake: host waits for the client's node to request the start, so the
+# start RPC is never dropped on a freshly-instantiated round.
+var _host_ready_to_start := false
+var _client_ready_for_start := false
+var _start_sent := false
+
 # Host-side bookkeeping for deciding the winner.
 var _finals := {}
 
@@ -84,6 +90,11 @@ const Cup := preload("res://minigames/beer/scripts/cup.gd")
 
 const POUR_SFX: AudioStream = preload("res://sounds/SFX/beer pour.wav")
 var _pour_sfx: AudioStreamPlayer
+
+const Voices := preload("res://minigames/character_voices.gd")
+# Clip the fight plays over the win card — a random line from the winner.
+var win_sound: AudioStream = null
+var win_sound_seed := -1   # shared seed so both peers pick the same clip
 
 # Georgian-capable font for the headers (the handwriting font lacks Georgian glyphs).
 const GEORGIAN_FONT: FontFile = preload("res://assets/fonts/NotoSansGeorgian-Black.ttf")
@@ -132,13 +143,38 @@ func begin_networked(is_host: bool) -> void:
 	networked = true
 	_net_elapsed = 0.0
 	if is_host:
-		start_game.rpc()
+		_host_ready_to_start = true
+		if _client_ready_for_start:
+			_send_start()
+	else:
+		_rpc_request_start.rpc_id(1)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_request_start() -> void:
+	if not multiplayer.is_server():
+		return
+	_client_ready_for_start = true
+	if _host_ready_to_start:
+		_send_start()
+
+
+func _send_start() -> void:
+	if _start_sent:
+		return
+	_start_sent = true
+	start_game.rpc()
 
 
 func _emit_embedded_result(result: int) -> void:
 	if _result_emitted:
 		return
 	_result_emitted = true
+	# The win-card clip is a random line from the winning fighter (seed-synced).
+	if result == 1:
+		win_sound = Voices.random_sound(local_char, win_sound_seed)
+	elif result == 0:
+		win_sound = Voices.random_sound(opp_char, win_sound_seed)
 	await get_tree().create_timer(1.1).timeout  # let WINNER/LOSER show briefly
 	minigame_finished.emit(result)
 

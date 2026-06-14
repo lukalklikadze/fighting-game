@@ -100,6 +100,12 @@ const CHAR_NAMES := {
 	"scottish": "კაბიანი შოტლანდიელი",
 }
 
+const Voices := preload("res://minigames/character_voices.gd")
+
+# Clip the fight plays over the win card — whichever line the winner typed.
+var win_sound: AudioStream = null
+var win_sound_seed := -1   # unused here (typeracer's win clip is the typed line)
+
 # --- Game state -------------------------------------------------------------
 var target := ""        # the local player's own sentence (their character)
 var opp_target := ""    # the opponent's sentence (their character)
@@ -125,6 +131,12 @@ var networked := false
 var _result_emitted := false
 var _net_elapsed := 0.0
 const MAX_ROUND_TIME := 25.0   # safety timeout so a networked round always resolves
+
+# Start handshake: the host waits for the client's node to exist (it requests the
+# start) before sending the lines, so the RPC is never dropped on a fresh round.
+var _net_pair: Array = []
+var _client_ready_for_start := false
+var _start_sent := false
 
 # --- Multiplayer draw detection ---------------------------------------------
 var _finishers: Array[int] = []  # peer IDs that have reported finished (host only)
@@ -190,20 +202,45 @@ func begin_solo() -> void:
 
 
 # Networked embedded entry: runs over the fight's existing peer (no own peer).
-# The host picks BOTH lines (length-matched) and starts both via the authority
-# RPC; the client just waits for it. First to finish wins; timeout forces a result.
+# The host picks both lines; the client asks for the start once its node exists,
+# so the start RPC can't be dropped (which left a fresh round's board blank).
 func begin_networked(is_host: bool) -> void:
 	solo = false
 	networked = true
 	_net_elapsed = 0.0
 	if is_host:
-		_host_start()
+		_net_pair = _matched_pair(local_char, opp_char)
+		if _client_ready_for_start:
+			_send_start()
+	else:
+		_rpc_request_start.rpc_id(1)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_request_start() -> void:
+	if not multiplayer.is_server():
+		return
+	_client_ready_for_start = true
+	if not _net_pair.is_empty():
+		_send_start()
+
+
+func _send_start() -> void:
+	if _start_sent or _net_pair.is_empty():
+		return
+	_start_sent = true
+	start_game.rpc(_net_pair[0], _net_pair[1])
 
 
 func _emit_embedded_result(result: int) -> void:
 	if _result_emitted:
 		return
 	_result_emitted = true
+	# The win-card clip is whatever line the winner typed.
+	if result == 1:
+		win_sound = Voices.sound_for_text(target)
+	elif result == 0:
+		win_sound = Voices.sound_for_text(opp_target)
 	await get_tree().create_timer(1.1).timeout  # let WINNER/LOSER show briefly
 	minigame_finished.emit(result)
 

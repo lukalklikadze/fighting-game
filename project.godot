@@ -23,6 +23,7 @@ config/features=PackedStringArray("4.6", "Forward Plus")
 
 MCPGameBridge="res://addons/godot_mcp/game_bridge/mcp_game_bridge.gd"
 MatchSetup="*res://scenes/scripts/match_setup.gd"
+BarAmbience="*res://scenes/scripts/bar_ambience.gd"
 
 [display]
 
