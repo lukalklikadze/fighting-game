@@ -1,0 +1,12 @@
+[gd_scene format=3 uid="uid://b8qx1n2title0"]
+
+[ext_resource type="Texture2D" uid="uid://r6o7xbrtvduj" path="res://assets/game_start_name.png" id="1_title"]
+[ext_resource type="Script" path="res://scenes/final/scripts/title.gd" id="2_script"]
+
+[node name="Title" type="Node2D"]
+script = ExtResource("2_script")
+
+[node name="Background" type="Sprite2D" parent="."]
+position = Vector2(640, 360)
+scale = Vector2(0.6666667, 0.6666667)
+texture = ExtResource("1_title")
