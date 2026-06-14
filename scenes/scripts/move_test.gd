@@ -82,6 +82,8 @@ func _on_died(_pid: int) -> void:
 
 func _process(delta: float) -> void:
 	_update_camera()
+	# Test bench: keep the special always ready (no cooldown) so you can spam it.
+	p1.reset_special_cooldown()
 	if Input.is_action_just_pressed("ui_cancel"):
 		get_tree().quit()
 

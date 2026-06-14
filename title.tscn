@@ -1,4 +1,4 @@
-[gd_scene format=3 uid="uid://b8qx1n2title0"]
+[gd_scene format=3 uid="uid://wjnc1sgbg1yq"]
 
 [ext_resource type="Texture2D" uid="uid://r6o7xbrtvduj" path="res://assets/game_start_name.png" id="1_title"]
 [ext_resource type="Script" path="res://scenes/scripts/title.gd" id="2_script"]

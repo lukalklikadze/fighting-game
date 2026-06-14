@@ -37,6 +37,7 @@ const PERSON_HARD_DIR := "res://assets/hard hit/"
 const PERSON_IDLE_DIR := "res://assets/idle/"
 const PERSON_BLOCK_DIR := "res://assets/block/"
 const PERSON_DEATH_DIR := "res://assets/death/"
+const PERSON_KNOCKBACK_DIR := "res://assets/knockback/"
 const SCOTISH_PIPE_IMG := "res://assets/bagpipe.png"
 # Single drawn block pose per fighter (filename index in assets/block/).
 const PERSON_BLOCK_FRAME := {"english": 20, "georgian": 20, "scotish": 3}
@@ -88,7 +89,7 @@ const HIT_INVULN_TIME := 1.0
 # MK deals a FLAT amount per clean hit regardless of which strike (its code does
 # `health -= 15` for every hit). We mirror that: all normals do the same damage.
 const PERSON_HIT_DAMAGE := 15
-const PERSON_HIT_KNOCKBACK := 360.0   # uniform modest stagger, MK-style
+const PERSON_HIT_KNOCKBACK := 680.0   # uniform stagger — knocks the foe well back
 const PERSON_HIT_STUN := 20           # uniform short hitstun (~0.33s)
 # Real-arcade hitstop: a small, UNIFORM impact freeze on contact (~0.05s) so hits
 # feel solid like a real fighting game -- but equal across every strike, so no
@@ -105,6 +106,7 @@ const JUMP_VELOCITY := -1320.0
 const GRAVITY := 3050.0
 const MAX_FALL_SPEED := 1750.0
 const DASH_SPEED := 1520.0
+const DEATH_ASCEND_SPEED := -460.0   # on death the fighter floats up "to heaven"
 const DASH_FRAMES := 8
 const DASH_COOLDOWN := 0.42
 const SLIDE_SPEED := 1040.0
@@ -569,8 +571,12 @@ func _build_person_frames(info: Dictionary) -> void:
 	_add_person_anim_list(frames, "jump_start", PERSON_JUMP_DIR, base, info["jump"], 10.0, false, false)
 	_add_person_anim_list(frames, "dash", PERSON_WALK_DIR, base, [info["dash"]], 6.0, false, false)
 	_add_person_anim(frames, "idle", PERSON_IDLE_DIR, base, 0, int(info["idle"]) - 1, 9.0, true, false)
-	for still in ["slide", "hit"]:
-		_add_person_anim(frames, still, PERSON_IDLE_DIR, base, 0, 0, 6.0, false, false)
+	_add_person_anim(frames, "slide", PERSON_IDLE_DIR, base, 0, 0, 6.0, false, false)
+	# Knockback / hit reaction: the drawn knockback pose (single un-numbered file).
+	frames.add_animation("hit")
+	frames.set_animation_speed("hit", 1.0)
+	frames.set_animation_loop("hit", false)
+	frames.add_frame("hit", load("%s%s.png" % [PERSON_KNOCKBACK_DIR, base]))
 	# Block: hold the drawn block pose (replaces the old blue tint).
 	var block_idx: int = int(PERSON_BLOCK_FRAME.get(character_key, 0))
 	_add_person_anim_list(frames, "block", PERSON_BLOCK_DIR, base, [block_idx], 6.0, false, false)
@@ -826,8 +832,10 @@ func _process_stun(delta: float) -> void:
 
 
 func _process_dead(delta: float) -> void:
-	velocity.x = move_toward(velocity.x, 0.0, WALK_SPEED * delta)
-	velocity.y = minf(velocity.y + GRAVITY * delta, MAX_FALL_SPEED)
+	# Float straight up "to heaven" while the death pose holds, until the
+	# controller restarts the round and resets the fighter to its start position.
+	velocity.x = move_toward(velocity.x, 0.0, 1400.0 * delta)
+	velocity.y = DEATH_ASCEND_SPEED
 
 
 func _advance_state_frames(delta: float) -> void:
