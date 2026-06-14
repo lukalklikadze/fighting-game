@@ -1,0 +1,24 @@
+[remap]
+
+importer="wav"
+type="AudioStreamWAV"
+uid="uid://17wut8inxhqf"
+path="res://.godot/imported/aravar siashi.wav-5223448d929a9fa0df399765fa0d204a.sample"
+
+[deps]
+
+source_file="res://sounds/Georgian/aravar siashi.wav"
+dest_files=["res://.godot/imported/aravar siashi.wav-5223448d929a9fa0df399765fa0d204a.sample"]
+
+[params]
+
+force/8_bit=false
+force/mono=false
+force/max_rate=false
+force/max_rate_hz=44100
+edit/trim=false
+edit/normalize=false
+edit/loop_mode=0
+edit/loop_begin=0
+edit/loop_end=-1
+compress/mode=2

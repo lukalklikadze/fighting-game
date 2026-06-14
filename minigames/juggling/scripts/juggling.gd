@@ -112,6 +112,10 @@ const INSTRUCTION_W := 500.0
 const INSTRUCTION_TIME := 3.0
 var _showing_instruction := false
 
+# ─── Audio ────────────────────────────────────────────────────────────────────
+const BALL_SFX: AudioStream = preload("res://sounds/SFX/ball.wav")
+var _ball_sfx: AudioStreamPlayer
+
 # ─── UI ───────────────────────────────────────────────────────────────────────
 var _font           : Font
 var _countdown_text := ""   # drawn over the pitch before game_on
@@ -133,6 +137,9 @@ func _ready() -> void:
 	chubby.base_font = base_font
 	chubby.variation_embolden = 0.6
 	_font = chubby
+	_ball_sfx = AudioStreamPlayer.new()
+	_ball_sfx.stream = BALL_SFX
+	add_child(_ball_sfx)
 	_resolve_chars()
 	if not embedded:
 		begin_solo()
@@ -282,6 +289,7 @@ func _update(delta: float) -> void:
 		if absf(my_ball.x - foot_x) < BALL_R + 20.0 and absf(my_ball.y - foot_y) < BALL_R + 26.0:
 			my_kick_hit = true
 			my_kick_count += 1
+			_ball_sfx.play()
 			if embedded and not networked and my_kick_count >= EMBED_WIN_KICKS:
 				winner = "you"   # solo only: kept the ball up long enough
 			var dir_x := (my_ball.x - my_x) * 1.3
@@ -306,6 +314,7 @@ func _update(delta: float) -> void:
 		if Vector2(my_ball.x - head_x, my_ball.y - head_y).length() < HEAD_HIT_R + BALL_R:
 			my_ball.y = head_y - (HEAD_HIT_R + BALL_R)   # sit the ball on top of the head
 			my_kick_count += 1
+			_ball_sfx.play()
 			if embedded and not networked and my_kick_count >= EMBED_WIN_KICKS:
 				winner = "you"
 			var dir_x := (my_ball.x - head_x) * 1.6

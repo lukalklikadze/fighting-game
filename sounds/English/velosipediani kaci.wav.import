@@ -1,0 +1,24 @@
+[remap]
+
+importer="wav"
+type="AudioStreamWAV"
+uid="uid://cg1yhco5au8jv"
+path="res://.godot/imported/velosipediani kaci.wav-0e52e86847ba3c649c5e833f9994ca87.sample"
+
+[deps]
+
+source_file="res://sounds/English/velosipediani kaci.wav"
+dest_files=["res://.godot/imported/velosipediani kaci.wav-0e52e86847ba3c649c5e833f9994ca87.sample"]
+
+[params]
+
+force/8_bit=false
+force/mono=false
+force/max_rate=false
+force/max_rate_hz=44100
+edit/trim=false
+edit/normalize=false
+edit/loop_mode=0
+edit/loop_begin=0
+edit/loop_end=-1
+compress/mode=2

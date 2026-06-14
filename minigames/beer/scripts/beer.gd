@@ -82,6 +82,9 @@ var _instruction: TextureRect   # instruction card shown before the round
 
 const Cup := preload("res://minigames/beer/scripts/cup.gd")
 
+const POUR_SFX: AudioStream = preload("res://sounds/SFX/beer pour.wav")
+var _pour_sfx: AudioStreamPlayer
+
 # Georgian-capable font for the headers (the handwriting font lacks Georgian glyphs).
 const GEORGIAN_FONT: FontFile = preload("res://assets/fonts/NotoSansGeorgian-Black.ttf")
 
@@ -102,6 +105,10 @@ func _ready() -> void:
 	var hand_theme := Theme.new()
 	hand_theme.default_font = hand_font
 	theme = hand_theme
+
+	_pour_sfx = AudioStreamPlayer.new()
+	_pour_sfx.stream = POUR_SFX
+	add_child(_pour_sfx)
 
 	_build_game_ui()
 	result_label.visible = false
@@ -239,6 +246,12 @@ func _process(delta: float) -> void:
 			velocity = move_toward(velocity, 0.0, POUR_DECEL * delta)
 
 		fill += velocity * delta
+		# Pour sound plays while beer is actually flowing (loops by replaying).
+		if velocity > 0.001:
+			if not _pour_sfx.playing:
+				_pour_sfx.play()
+		elif _pour_sfx.playing:
+			_pour_sfx.stop()
 		if fill >= SPILL_LIMIT:
 			fill = SPILL_LIMIT
 			_lock()
@@ -275,6 +288,8 @@ func _lock() -> void:
 	if stopped:
 		return
 	stopped = true
+	if _pour_sfx.playing:
+		_pour_sfx.stop()
 	_render_you()
 	if not solo:
 		update_fill.rpc(fill, true)

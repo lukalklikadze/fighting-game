@@ -1,0 +1,24 @@
+[remap]
+
+importer="wav"
+type="AudioStreamWAV"
+uid="uid://dd3b3sr6i6l72"
+path="res://.godot/imported/jotia vs eng.wav-deb381b018cdf4c57757a852bfa4e403.sample"
+
+[deps]
+
+source_file="res://sounds/Shit Talk/jotia vs eng.wav"
+dest_files=["res://.godot/imported/jotia vs eng.wav-deb381b018cdf4c57757a852bfa4e403.sample"]
+
+[params]
+
+force/8_bit=false
+force/mono=false
+force/max_rate=false
+force/max_rate_hz=44100
+edit/trim=false
+edit/normalize=false
+edit/loop_mode=0
+edit/loop_begin=0
+edit/loop_end=-1
+compress/mode=2
