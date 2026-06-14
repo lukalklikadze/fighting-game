@@ -87,6 +87,9 @@ var solo      := false
 
 # Embedded mode (launched as a "super" by the fight controller)
 signal minigame_finished(result: int)  # 1 = local won, 0 = local lost, -1 = draw
+const Voices := preload("res://minigames/character_voices.gd")
+var win_sound: AudioStream = null   # clip played over the win card (random from winner)
+var win_sound_seed := -1   # shared seed so both peers pick the same clip
 const EMBED_WIN_KICKS := 6   # solo only: reach this many clean kicks to "win"
 const MAX_DURATION := 30.0   # networked round cap; most kicks wins at timeout
 var embedded := false
@@ -94,6 +97,11 @@ var networked := false
 var _result_emitted := false
 var _net_elapsed := 0.0
 var op_kick_count := 0
+# Start handshake: host waits for the client's node before sending the start, so
+# the RPC isn't dropped on a freshly-instantiated round.
+var _host_ready_to_start := false
+var _client_ready_for_start := false
+var _start_sent := false
 var _net_resolved := false   # host: winner decided
 
 # ─── Character names (resolved from MatchSetup: which fighter each side picked) ──
@@ -164,7 +172,27 @@ func begin_networked(is_host: bool) -> void:
 	networked = true
 	am_host = is_host
 	if is_host:
-		_net_start.rpc()
+		_host_ready_to_start = true
+		if _client_ready_for_start:
+			_send_start()
+	else:
+		_rpc_request_start.rpc_id(1)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_request_start() -> void:
+	if not multiplayer.is_server():
+		return
+	_client_ready_for_start = true
+	if _host_ready_to_start:
+		_send_start()
+
+
+func _send_start() -> void:
+	if _start_sent:
+		return
+	_start_sent = true
+	_net_start.rpc()
 
 
 @rpc("authority", "call_local", "reliable")
@@ -229,6 +257,11 @@ func _emit_embedded_result(result: int) -> void:
 	if _result_emitted:
 		return
 	_result_emitted = true
+	# The win-card clip is a random line from the winning fighter (seed-synced).
+	if result == 1:
+		win_sound = Voices.random_sound(local_char, win_sound_seed)
+	elif result == 0:
+		win_sound = Voices.random_sound(opp_char, win_sound_seed)
 	await get_tree().create_timer(1.1).timeout  # let the WINNER/LOSER banner show
 	minigame_finished.emit(result)
 
@@ -306,20 +339,6 @@ func _update(delta: float) -> void:
 		my_ball.x = WALL_R - BALL_R;  my_bvel.x = -absf(my_bvel.x) * BOUNCE_DAMP
 	if my_ball.y - BALL_R < CEILING_Y:
 		my_ball.y = CEILING_Y + BALL_R; my_bvel.y = absf(my_bvel.y) * BOUNCE_DAMP
-
-	# ── Header: a descending ball that lands on the head juggles up too ───────
-	if my_bvel.y > 0.0:
-		var head_x := my_x + (HEAD_CX_FRAC - 0.5) * FIG_HEIGHT
-		var head_y := GROUND_Y + FIG_FOOT_PAD - FIG_HEIGHT + HEAD_CY_FRAC * FIG_HEIGHT
-		if Vector2(my_ball.x - head_x, my_ball.y - head_y).length() < HEAD_HIT_R + BALL_R:
-			my_ball.y = head_y - (HEAD_HIT_R + BALL_R)   # sit the ball on top of the head
-			my_kick_count += 1
-			_ball_sfx.play()
-			if embedded and not networked and my_kick_count >= EMBED_WIN_KICKS:
-				winner = "you"
-			var dir_x := (my_ball.x - head_x) * 1.6
-			var rnd_x := randf_range(-KICK_RAND_X * 0.5, KICK_RAND_X * 0.5)
-			my_bvel = Vector2(dir_x + rnd_x, KICK_VEL_Y * 0.9) * my_speed
 
 	if my_ball.y + BALL_R >= GROUND_Y:
 		my_alive = false

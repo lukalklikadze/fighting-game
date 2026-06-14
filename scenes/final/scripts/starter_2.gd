@@ -13,7 +13,8 @@ const CHAR_TEXTURES := {
 const BALL_ORDER := ["georgian", "scottish", "english", "random"]
 const SELECTED_SCALE := 1.18
 const DIMMED := Color(0.65, 0.65, 0.65, 1.0)
-const MENU_SELECTED := Color(0.45, 0.45, 0.45, 1.0)
+const MENU_GLOW := Color(1.8, 1.6, 0.8, 1.0)   # over-bright warm glow for the selected word
+const TAKEN := Color(0.22, 0.22, 0.22, 0.5)   # opponent's fighter — greyed out, off-limits
 
 const MENU_FONT: FontFile = preload("res://assets/fonts/NotoSansGeorgian-Black.ttf")
 
@@ -63,8 +64,25 @@ func _ready() -> void:
 	_show_choices()
 
 
+var _glow_t := 0.0
+
+
 func _process(delta: float) -> void:
 	_process_join_timeout(delta)
+	_update_menu_glow(delta)
+
+
+# Pulsing glow on the currently-selected START / JOIN word.
+func _update_menu_glow(delta: float) -> void:
+	if _start_sprite == null or _join_sprite == null:
+		return
+	if _menu != Menu.CHOICES:
+		return
+	_glow_t += delta
+	var pulse := 0.5 + 0.5 * sin(_glow_t * 5.0)
+	var glow := Color.WHITE.lerp(MENU_GLOW, pulse)
+	_start_sprite.modulate = glow if _menu_index == 0 else Color.WHITE
+	_join_sprite.modulate = glow if _menu_index == 1 else Color.WHITE
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -98,14 +116,50 @@ func _menu_input(event: InputEvent) -> void:
 func _select_input(event: InputEvent) -> void:
 	if not _selection_enabled:
 		return
+	# Once a fighter is locked in, the choice can't be changed (unless a pick
+	# conflict forced a re-pick, which clears _chosen back to -1).
+	if _chosen >= 0 and not _test_mode:
+		return
 	if _key_right(event):
-		_selected = (_selected + 1) % BALL_ORDER.size()
+		_selected = _next_free(_selected, 1)
 		_update_highlight()
+		_send_hover()
 	elif _key_left(event):
-		_selected = (_selected - 1 + BALL_ORDER.size()) % BALL_ORDER.size()
+		_selected = _next_free(_selected, -1)
 		_update_highlight()
+		_send_hover()
 	elif event.is_action_pressed("ui_accept"):
 		_choose(_selected)
+
+
+# Live-preview the fighter we're hovering on the opponent's screen, before lock-in.
+func _send_hover() -> void:
+	if _hosting_active or _connected_as_client:
+		_rpc_set_opponent_hover.rpc(_selected)
+
+
+@rpc("any_peer", "call_remote", "unreliable_ordered")
+func _rpc_set_opponent_hover(index: int) -> void:
+	if _opp_chosen >= 0:
+		return  # opponent has already locked in — keep their final choice
+	index = clampi(index, 0, BALL_ORDER.size() - 1)
+	_opponent_display.texture = CHAR_TEXTURES[BALL_ORDER[index]]
+	_opponent_display.visible = true
+
+
+# A concrete fighter the opponent already chose is off-limits (random is fine).
+func _is_taken(index: int) -> bool:
+	return _opp_chosen >= 0 and index == _opp_chosen and BALL_ORDER[index] != "random"
+
+
+# Next selectable ball in a direction, skipping the opponent's taken fighter.
+func _next_free(start: int, dir: int) -> int:
+	var i := start
+	for _n in range(BALL_ORDER.size()):
+		i = (i + dir + BALL_ORDER.size()) % BALL_ORDER.size()
+		if not _is_taken(i):
+			return i
+	return start
 
 
 func _activate_menu() -> void:
@@ -134,11 +188,11 @@ func _activate_start() -> void:
 func _activate_join() -> void:
 	_menu = Menu.CODE_ENTRY
 	_apply_menu_visibility()
-	_code_label.text = "ENTER A CODE TO JOIN"
+	_code_label.text = "შეიყვანე კოდი"
 	_code_edit.editable = true
 	_code_edit.text = ""
 	_code_edit.grab_focus()
-	_set_status("Type your friend's code and press ENTER. (ESC to go back.)")
+	_set_status("")
 
 
 func _enter_test_mode() -> void:
@@ -155,6 +209,8 @@ func _enter_test_mode() -> void:
 func _set_selection_enabled(enabled: bool) -> void:
 	_selection_enabled = enabled
 	_update_highlight()
+	if enabled:
+		_send_hover()   # let the opponent see our starting pick right away
 
 
 func _update_highlight() -> void:
@@ -164,10 +220,15 @@ func _update_highlight() -> void:
 			_balls[ball_name].modulate = Color.WHITE
 		_character_display.visible = false
 		return
+	if _is_taken(_selected):
+		_selected = _next_free(_selected, 1)
 	for i in range(BALL_ORDER.size()):
 		var ball_name: String = BALL_ORDER[i]
 		var ball: Sprite2D = _balls[ball_name]
-		if i == _selected:
+		if _is_taken(i):
+			ball.scale = _base_scale[ball_name]
+			ball.modulate = TAKEN
+		elif i == _selected:
 			ball.scale = _base_scale[ball_name] * SELECTED_SCALE
 			ball.modulate = Color.WHITE
 		else:
@@ -178,6 +239,9 @@ func _update_highlight() -> void:
 
 
 func _choose(index: int) -> void:
+	if _is_taken(index):
+		_set_status("ეს მებრძოლი დაკავებულია — აირჩიე სხვა")
+		return
 	if BALL_ORDER[index] == "random":
 		index = _resolve_random()
 	_chosen = index
@@ -204,6 +268,15 @@ func _rpc_set_opponent_choice(index: int) -> void:
 	_opp_chosen = index
 	_opponent_display.texture = CHAR_TEXTURES[BALL_ORDER[index]]
 	_opponent_display.visible = true
+	# Simultaneous-pick race: if we landed on the same fighter, the client yields
+	# and re-picks (the host keeps its choice).
+	if _connected_as_client and _chosen == _opp_chosen and BALL_ORDER[_chosen] != "random":
+		_chosen = -1
+		_set_status("ეს მებრძოლი დაკავებულია — აირჩიე სხვა")
+	# Keep the cursor (and any pending choice) off the now-taken fighter.
+	if _is_taken(_selected):
+		_selected = _next_free(_selected, 1)
+	_update_highlight()
 	_maybe_start()
 
 
@@ -211,6 +284,9 @@ func _maybe_start() -> void:
 	if _starting or _test_mode or not _hosting_active:
 		return
 	if _chosen < 0 or _opp_chosen < 0:
+		return
+	# Never start a duplicate matchup — wait for the client to re-pick.
+	if _chosen == _opp_chosen and BALL_ORDER[_chosen] != "random":
 		return
 	_starting = true
 	_set_status("Starting fight...")
@@ -293,9 +369,9 @@ func _apply_menu_visibility() -> void:
 func _update_menu_highlight() -> void:
 	if _start_sprite == null or _join_sprite == null:
 		return
-	var in_choices := _menu == Menu.CHOICES
-	_start_sprite.modulate = MENU_SELECTED if (in_choices and _menu_index == 0) else Color.WHITE
-	_join_sprite.modulate = MENU_SELECTED if (in_choices and _menu_index == 1) else Color.WHITE
+	# Baseline white; the pulsing glow on the selected word is driven in _process.
+	_start_sprite.modulate = Color.WHITE
+	_join_sprite.modulate = Color.WHITE
 
 
 func _field_style(focused: bool) -> StyleBoxFlat:
@@ -367,7 +443,7 @@ func _join_game() -> void:
 	var host_ip := _parse_join_address(_code_edit.text)
 	if host_ip == "":
 		_code_edit.grab_focus()
-		_set_status("Enter a valid host code.")
+		_set_status("")
 		return
 	_close_multiplayer_peer()
 	var peer := ENetMultiplayerPeer.new()
@@ -379,7 +455,7 @@ func _join_game() -> void:
 	_code_edit.release_focus()
 	_pending_join_ip = host_ip
 	_join_timeout_timer = JOIN_TIMEOUT_TIME
-	_set_status("Joining %s..." % host_ip)
+	_set_status("..." % host_ip)
 
 
 func _close_multiplayer_peer() -> void:
@@ -418,8 +494,8 @@ func _on_peer_connected(peer_id: int) -> void:
 		_client_peer_id = peer_id
 		_menu = Menu.SELECT
 		_apply_menu_visibility()
-		_code_label.text = "PLAYER 2 CONNECTED"
-		_set_status("Both players in — pick your fighter!")
+		_code_label.text = ""
+		_set_status("")
 		_set_selection_enabled(true)
 		_send_choice_to(peer_id)
 
@@ -441,8 +517,8 @@ func _on_connected_to_server() -> void:
 	_pending_join_ip = ""
 	_menu = Menu.SELECT
 	_apply_menu_visibility()
-	_code_label.text = "CONNECTED AS PLAYER 2"
-	_set_status("Both players in — pick your fighter!")
+	_code_label.text = ""
+	_set_status("")
 	_refresh_lobby_controls()
 	_set_selection_enabled(true)
 	_send_choice_to(1)

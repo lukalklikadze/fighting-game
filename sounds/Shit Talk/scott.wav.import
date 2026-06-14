@@ -1,0 +1,24 @@
+[remap]
+
+importer="wav"
+type="AudioStreamWAV"
+uid="uid://omcwanf46f05"
+path="res://.godot/imported/scott.wav-4e94d3d267f0dc7c8961dd47847345ca.sample"
+
+[deps]
+
+source_file="res://sounds/Shit Talk/scott.wav"
+dest_files=["res://.godot/imported/scott.wav-4e94d3d267f0dc7c8961dd47847345ca.sample"]
+
+[params]
+
+force/8_bit=false
+force/mono=false
+force/max_rate=false
+force/max_rate_hz=44100
+edit/trim=false
+edit/normalize=false
+edit/loop_mode=0
+edit/loop_begin=0
+edit/loop_end=-1
+compress/mode=2

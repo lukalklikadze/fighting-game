@@ -19,6 +19,7 @@ distance = -300.0
 script = ExtResource("1_world")
 
 [node name="background" type="Sprite2D" parent="." unique_id=939941813]
+z_index = -2
 position = Vector2(-2, 2.000002)
 scale = Vector2(0.9101851, 0.91018516)
 texture = ExtResource("2_e84ua")
@@ -45,7 +46,7 @@ polygon = PackedVector2Array(900, -320, 916, -320, 916, 240, 900, 240)
 [node name="WorldCollision" type="StaticBody2D" parent="." unique_id=104717477]
 
 [node name="GroundCollision" type="CollisionShape2D" parent="WorldCollision" unique_id=438808134]
-position = Vector2(0, 262)
+position = Vector2(0, 322)
 shape = SubResource("RectangleShape2D_ground")
 
 [node name="LeftWallCollision" type="CollisionShape2D" parent="WorldCollision" unique_id=1246986665]
@@ -62,10 +63,10 @@ shape = SubResource("WorldBoundaryShape2D_ceiling")
 [node name="Players" type="Node2D" parent="." unique_id=57410791]
 
 [node name="PlayerOne" parent="Players" unique_id=54877835 instance=ExtResource("2_player")]
-position = Vector2(-300, 232)
+position = Vector2(-300, 292)
 
 [node name="PlayerTwo" parent="Players" unique_id=1049287905 instance=ExtResource("2_player")]
-position = Vector2(300, 232)
+position = Vector2(300, 292)
 player_id = 2
 accept_local_input = false
 bot_enabled = true

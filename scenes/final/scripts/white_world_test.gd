@@ -6,8 +6,8 @@ const DISCOVERY_REQUEST := "FIGHTING_GAME_FIND_HOST"
 const DISCOVERY_RESPONSE_PREFIX := "FIGHTING_GAME_HOST:"
 const JOIN_CODE_ALPHABET := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 const JOIN_TIMEOUT_TIME := 8.0
-const PLAYER_ONE_START := Vector2(-260, 232)
-const PLAYER_TWO_START := Vector2(260, 232)
+const PLAYER_ONE_START := Vector2(-260, 292)
+const PLAYER_TWO_START := Vector2(260, 292)
 const TITLE_DURATION := 1.8
 const VICTORY_DISPLAY_TIME := 2.6
 
@@ -46,6 +46,15 @@ const WIN_CARDS := {
 	"scottish": preload("res://assets/scotish_win.png"),
 }
 const WIN_CARD_TIME := 3.0
+# Fight background music — played in order and looped until the fight ends.
+const FIGHT_MUSIC := [
+	preload("res://sounds/Songs/Waka Waka.mp3"),
+	preload("res://sounds/Songs/Wavin Flag.mp3"),
+	preload("res://sounds/Songs/Ole Ola.mp3"),
+]
+const MUSIC_BASE_DB := -16.0   # background level
+# Per-track trim so all three sit at Waka Waka's loudness (Wavin Flag is hotter).
+const FIGHT_MUSIC_DB := [0.0, -15.0, 0.0]
 enum MatchSub { FIGHT, SUPER, KO, PAUSE }
 
 # Fighting-game camera: follow the midpoint, zoom out as the fighters separate,
@@ -117,6 +126,11 @@ var _code_edit: LineEdit
 var _host_code_label: Label
 var _status_label: Label
 var _victory_label: Label
+var _music: AudioStreamPlayer
+var _music_idx := 0
+var _win_voice: AudioStreamPlayer
+var _death_sfx: AudioStreamPlayer
+var _death_cam_target: Node2D = null   # the loser the camera chases on final death
 var _msub := MatchSub.FIGHT
 var _bar := {1: 1, 2: 1}
 var _super_connected := false
@@ -181,6 +195,7 @@ func _ready() -> void:
 	_rng.randomize()
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 	RenderingServer.set_default_clear_color(Color(0.015, 0.012, 0.012, 1.0))
+	_setup_music()
 	_build_interface()
 	_connect_health_signals()
 	_connect_death_signals()
@@ -1182,10 +1197,47 @@ func _start_match(client_peer_id: int, p1_character: int, p2_character: int) -> 
 	if _fight_mode:
 		_fight_started = true
 		MatchSetup.clear()
+	_start_fight_music()
 	_show_match_screen()
 	# Pre-fight instructions: same card + ready logic, shown on both peers. The
 	# fight is frozen until both ready or the 20s runs out. Doesn't use a pause.
 	_begin_intro()
+
+
+# --- Fight background music -------------------------------------------------
+
+func _setup_music() -> void:
+	_music = AudioStreamPlayer.new()
+	add_child(_music)
+	for stream in FIGHT_MUSIC:
+		if stream is AudioStreamMP3:
+			stream.loop = false
+	_music.finished.connect(_on_music_finished)
+	_win_voice = AudioStreamPlayer.new()
+	add_child(_win_voice)
+	_death_sfx = AudioStreamPlayer.new()
+	_death_sfx.stream = preload("res://sounds/death.mp3")
+	add_child(_death_sfx)
+
+
+func _start_fight_music() -> void:
+	_play_music_track(0)
+
+
+func _on_music_finished() -> void:
+	_play_music_track((_music_idx + 1) % FIGHT_MUSIC.size())
+
+
+func _play_music_track(idx: int) -> void:
+	_music_idx = idx
+	_music.stream = FIGHT_MUSIC[idx]
+	_music.volume_db = MUSIC_BASE_DB + float(FIGHT_MUSIC_DB[idx])
+	_music.play()
+
+
+func _stop_fight_music() -> void:
+	if _music != null and _music.playing:
+		_music.stop()
 
 
 func _connect_super_signals() -> void:
@@ -1276,30 +1328,11 @@ func _apply_character_to_player(player: Node2D, character_index: int) -> void:
 	player.call("set_character", str(CHARACTERS[character_index].get("key", "placeholder")))
 
 
-func _return_to_selection_after_match(message: String) -> void:
-	_locked_by_player[1] = false
-	_locked_by_player[2] = false
-	_selected_by_player[1] = -1
-	_selected_by_player[2] = -1
-	_match_end_sent = false
-	# Tear down the lives/super loop.
-	_clear_pause_state()
-	_msub = MatchSub.FIGHT
-	_bar = {1: 1, 2: 1}
+func _return_to_selection_after_match(_message: String) -> void:
+	# After a match, go back to the starter screen (a fresh start), per design.
+	_stop_fight_music()
 	_clear_minigame()
-	if _fade_rect != null:
-		_fade_rect.color.a = 0.0
-		_fade_rect.visible = false
-	player_one.set("super_fill_enabled", false)
-	player_two.set("super_fill_enabled", false)
-	# Both players are still connected, so drop them straight back onto the
-	# character grid -- they can only pick again, never touch START/JOIN.
-	_focus = FocusTarget.GRID
-	_configure_players_for_selection()
-	_reset_match()
-	_show_select_screen(message)
-	if multiplayer.has_multiplayer_peer() and multiplayer.is_server():
-		_broadcast_lobby_state(message)
+	get_tree().change_scene_to_file("res://scenes/final/Title.tscn")
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -1411,9 +1444,11 @@ func _host_begin_super(attacker: int) -> void:
 	if _screen != ScreenState.MATCH or _msub != MatchSub.FIGHT:
 		return
 	var which := _pick_minigame()
+	# Host picks the win-sound seed too, so both peers play the same random clip.
+	var seed := randi()
 	if multiplayer.has_multiplayer_peer():
-		_rpc_begin_super.rpc(which, attacker)
-	_run_super(which, attacker)
+		_rpc_begin_super.rpc(which, attacker, seed)
+	_run_super(which, attacker, seed)
 
 
 func _pick_minigame() -> int:
@@ -1429,11 +1464,11 @@ func _pick_minigame() -> int:
 
 
 @rpc("authority", "call_remote", "reliable")
-func _rpc_begin_super(which: int, attacker: int) -> void:
-	_run_super(which, attacker)
+func _rpc_begin_super(which: int, attacker: int, seed: int) -> void:
+	_run_super(which, attacker, seed)
 
 
-func _run_super(which: int, attacker: int) -> void:
+func _run_super(which: int, attacker: int, seed: int) -> void:
 	_msub = MatchSub.SUPER
 	_set_match_frozen(true)
 	var atk: Node2D = player_one if attacker == 1 else player_two
@@ -1441,14 +1476,16 @@ func _run_super(which: int, attacker: int) -> void:
 		atk.call("reset_super")
 	await _super_fade(1.0)
 	_fight_layer.visible = false
-	_start_minigame(which)
+	_start_minigame(which, seed)
 	await _super_fade(0.0)
 	var result: int = await _minigame.minigame_finished
 	# A draw doesn't resolve the super — replay the minigame until someone wins.
 	while result == -1:
 		_clear_minigame()
-		_start_minigame(which)
+		_start_minigame(which, seed)
 		result = await _minigame.minigame_finished
+	# Grab the winner's voice clip before the minigame is freed.
+	var win_sound: AudioStream = _minigame.get("win_sound")
 	await _super_fade(1.0)
 	_clear_minigame()
 	_fight_layer.visible = true
@@ -1456,8 +1493,8 @@ func _run_super(which: int, attacker: int) -> void:
 	if not multiplayer.has_multiplayer_peer() or multiplayer.is_server():
 		_apply_super_outcome(attacker, result)
 	await _super_fade(0.0)
-	# Show the winner's card over the frozen fight for a few seconds.
-	await _show_win_card(result)
+	# Show the winner's card (with their voice line) over the frozen fight.
+	await _show_win_card(result, win_sound)
 	if _msub == MatchSub.SUPER:
 		_msub = MatchSub.FIGHT
 		_set_match_frozen(false)
@@ -1465,7 +1502,7 @@ func _run_super(which: int, attacker: int) -> void:
 
 # Overlays the winning fighter's card over the (still frozen) fight. `result` is
 # from the local perspective: 1 = local won, 0 = local lost, -1 = draw.
-func _show_win_card(result: int) -> void:
+func _show_win_card(result: int, win_sound: AudioStream = null) -> void:
 	if result != 1 and result != 0:
 		return  # draw — no winner card
 	var local_id := _local_player_id()
@@ -1485,15 +1522,22 @@ func _show_win_card(result: int) -> void:
 	card.stretch_mode = TextureRect.STRETCH_SCALE
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_mg_layer.add_child(card)
-	await get_tree().create_timer(WIN_CARD_TIME).timeout
+	# Play the winner's voice over the card and hold until it finishes.
+	var hold := WIN_CARD_TIME
+	if win_sound != null:
+		_win_voice.stream = win_sound
+		_win_voice.play()
+		hold = maxf(WIN_CARD_TIME, win_sound.get_length())
+	await get_tree().create_timer(hold).timeout
 	card.queue_free()
 
 
-func _start_minigame(which: int) -> void:
+func _start_minigame(which: int, seed: int = -1) -> void:
 	var packed: PackedScene = load(MINIGAME_PATHS[clampi(which, 1, TOTAL_SUPERS)])
 	_minigame = packed.instantiate()
 	_minigame.name = "ActiveMinigame"   # identical NodePath on both peers for RPCs
 	_minigame.set("embedded", true)
+	_minigame.set("win_sound_seed", seed)   # same seed on both peers → same random clip
 	_mg_layer.add_child(_minigame)
 	if multiplayer.has_multiplayer_peer() and (_hosting_active or _connected_as_client):
 		_minigame.call("begin_networked", multiplayer.is_server())
@@ -1545,7 +1589,7 @@ func _super_fade(to_alpha: float) -> void:
 func _handle_pause_input() -> void:
 	# Edge-detected pause key. Only from a live fight (never a minigame / KO).
 	var pressed := Input.is_physical_key_pressed(PAUSE_KEY)
-	if pressed and not _pause_down and _msub == MatchSub.FIGHT and not _pause_active:
+	if pressed and not _pause_down and _msub == MatchSub.FIGHT and not _pause_active and _minigame == null:
 		_request_pause()
 	_pause_down = pressed
 
@@ -1568,7 +1612,7 @@ func _rpc_request_pause(pid: int) -> void:
 
 
 func _host_begin_pause(pid: int) -> void:
-	if _screen != ScreenState.MATCH or _msub != MatchSub.FIGHT or _pause_active:
+	if _screen != ScreenState.MATCH or _msub != MatchSub.FIGHT or _pause_active or _minigame != null:
 		return
 	if int(_pause_count.get(pid, PAUSE_PER_PLAYER)) >= PAUSE_PER_PLAYER:
 		return   # this player has used up their pauses
@@ -1748,21 +1792,29 @@ func _rpc_play_victory(winner: int) -> void:
 
 
 func _play_victory(winner: int) -> void:
-	# The loser is already in its DEAD state playing the death animation. Freeze
-	# both fighters' input so the winner just stands while the banner is shown.
+	# The loser is in its DEAD state flying up "to heaven". Freeze input, show the
+	# banner, chase the loser with the camera and play the death sting; when it
+	# finishes, the match is over and we return to the starter screen.
+	_stop_fight_music()
 	player_one.set("accept_local_input", false)
 	player_two.set("accept_local_input", false)
 	_show_victory_banner(winner)
-	# Only the host counts down, then sends everyone back to character select.
+	var loser := _other_player(winner)
+	_death_cam_target = player_one if loser == 1 else player_two
+	if _death_sfx != null:
+		_death_sfx.play()
+	# Only the host counts down, then sends everyone back to the starter.
 	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
 		return
-	await get_tree().create_timer(VICTORY_DISPLAY_TIME).timeout
+	var wait := VICTORY_DISPLAY_TIME
+	if _death_sfx != null and _death_sfx.stream != null:
+		wait = maxf(VICTORY_DISPLAY_TIME, _death_sfx.stream.get_length())
+	await get_tree().create_timer(wait).timeout
 	if not _match_end_sent or _screen != ScreenState.MATCH:
 		return
-	var message := "Player %d wins. Choose again." % winner
 	if multiplayer.has_multiplayer_peer():
-		_rpc_return_to_selection_after_match.rpc(message)
-	_return_to_selection_after_match(message)
+		_rpc_return_to_selection_after_match.rpc("")
+	_return_to_selection_after_match("")
 
 
 func _show_victory_banner(winner: int) -> void:
@@ -2237,6 +2289,10 @@ func _update_health_bar(bar: ProgressBar, text_label: Label, current_health: int
 
 
 func _update_camera() -> void:
+	# On the final death, follow the loser as it flies up "to heaven".
+	if _death_cam_target != null and is_instance_valid(_death_cam_target):
+		camera.global_position = camera.global_position.lerp(_death_cam_target.global_position, 0.10)
+		return
 	_update_fighting_camera(camera, player_one.global_position.x, player_two.global_position.x)
 
 
