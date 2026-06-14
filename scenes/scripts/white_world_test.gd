@@ -119,6 +119,7 @@ var _pause_is_intro := false      # true while showing the pre-fight instruction
 var _pauser_pid := 0
 var _pause_time_left := 0.0
 var _pause_down := false
+var _super_down := false
 var _pause_ready_down := false
 var _pause_count := {1: 0, 2: 0}      # pauses each player has used this match
 var _pause_ready := {1: false, 2: false}
@@ -206,6 +207,7 @@ func _process(delta: float) -> void:
 					_process_match_end()
 				_handle_debug_reset()
 				_handle_pause_input()
+				_handle_super_input()
 
 
 func _build_interface() -> void:
@@ -1344,7 +1346,26 @@ func _resume_round(b1: int, b2: int) -> void:
 #  Super meter -> networked minigame
 # ===========================================================================
 
-func _on_super_full(pid: int) -> void:
+func _on_super_full(_pid: int) -> void:
+	# The minigame is now OPTIONAL: a full meter does nothing on its own — the
+	# player launches the contest by pressing SPACE (see _handle_super_input).
+	pass
+
+
+func _handle_super_input() -> void:
+	# Edge-detected SPACE launches the contest, but only if your meter is full.
+	var pressed := Input.is_physical_key_pressed(KEY_SPACE)
+	if pressed and not _super_down and _msub == MatchSub.FIGHT and not _pause_active:
+		_try_use_super()
+	_super_down = pressed
+
+
+func _try_use_super() -> void:
+	var pid := _local_player_id()
+	var fighter: Node2D = player_one if pid == 1 else player_two
+	# Checked on the local (authoritative) fighter, so the value is exact.
+	if float(fighter.get("super_meter")) < float(fighter.get("super_max")):
+		return
 	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
 		_rpc_request_super.rpc_id(1, pid)
 	else:
