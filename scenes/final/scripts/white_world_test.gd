@@ -130,7 +130,6 @@ var _music: AudioStreamPlayer
 var _music_idx := 0
 var _win_voice: AudioStreamPlayer
 var _death_sfx: AudioStreamPlayer
-var _death_cam_target: Node2D = null   # the loser the camera chases on final death
 var _msub := MatchSub.FIGHT
 var _bar := {1: 1, 2: 1}
 var _super_connected := false
@@ -292,8 +291,7 @@ func _build_lives_super_hud(layer: CanvasLayer) -> void:
 	p1_box.add_theme_constant_override("separation", 6)
 	row.add_child(p1_box)
 	for i in range(TOTAL_BARS):
-		var pip := ColorRect.new()
-		pip.custom_minimum_size = Vector2(22, 12)
+		var pip := _make_cup_pip()
 		p1_box.add_child(pip)
 		_p1_pips.append(pip)
 
@@ -307,8 +305,7 @@ func _build_lives_super_hud(layer: CanvasLayer) -> void:
 	p2_box.add_theme_constant_override("separation", 6)
 	row.add_child(p2_box)
 	for i in range(TOTAL_BARS):
-		var pip := ColorRect.new()
-		pip.custom_minimum_size = Vector2(22, 12)
+		var pip := _make_cup_pip()
 		p2_box.add_child(pip)
 		_p2_pips.append(pip)
 
@@ -1259,10 +1256,21 @@ func _refresh_lives_super_hud() -> void:
 	_refresh_pips(_p2_pips, 2, P2_COLOR)
 
 
-func _refresh_pips(pips: Array, pid: int, col: Color) -> void:
+func _make_cup_pip() -> TextureRect:
+	# A life "pip" drawn as the cup.png icon instead of a coloured square.
+	var pip := TextureRect.new()
+	pip.texture = preload("res://assets/cup.png")
+	pip.custom_minimum_size = Vector2(34, 34)
+	pip.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	pip.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	return pip
+
+
+func _refresh_pips(pips: Array, pid: int, _col: Color) -> void:
 	var lit := clampi(TOTAL_BARS - (int(_bar[pid]) - 1), 0, TOTAL_BARS)
 	for i in range(pips.size()):
-		pips[i].color = col if i < lit else Color(0.18, 0.18, 0.18, 1.0)
+		# Full cup for a life still held; faded cup for a lost one.
+		pips[i].modulate = Color(1, 1, 1, 1) if i < lit else Color(1, 1, 1, 0.16)
 
 
 func _set_match_frozen(frozen: bool) -> void:
@@ -1382,6 +1390,9 @@ func _rpc_begin_ko(loser: int) -> void:
 func _begin_ko(_loser: int) -> void:
 	_msub = MatchSub.KO
 	_set_match_frozen(true)
+	# Death sting on EVERY death (each lost life), not just the final one.
+	if _death_sfx != null:
+		_death_sfx.play()
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -1799,10 +1810,8 @@ func _play_victory(winner: int) -> void:
 	player_one.set("accept_local_input", false)
 	player_two.set("accept_local_input", false)
 	_show_victory_banner(winner)
-	var loser := _other_player(winner)
-	_death_cam_target = player_one if loser == 1 else player_two
-	if _death_sfx != null:
-		_death_sfx.play()
+	# The loser flies up off the top of the screen (camera doesn't chase it).
+	# The death sting already played at the KO.
 	# Only the host counts down, then sends everyone back to the starter.
 	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
 		return
@@ -2289,10 +2298,7 @@ func _update_health_bar(bar: ProgressBar, text_label: Label, current_health: int
 
 
 func _update_camera() -> void:
-	# On the final death, follow the loser as it flies up "to heaven".
-	if _death_cam_target != null and is_instance_valid(_death_cam_target):
-		camera.global_position = camera.global_position.lerp(_death_cam_target.global_position, 0.10)
-		return
+	# Camera stays on the arena (fixed height); a dead fighter flies up out of view.
 	_update_fighting_camera(camera, player_one.global_position.x, player_two.global_position.x)
 
 

@@ -67,6 +67,7 @@ var my_bvel   := Vector2.ZERO
 var my_kick       := 0.0    # remaining kick animation time
 var my_kick_right := true   # which leg is swinging
 var my_kick_hit   := false  # impulse already applied this swing
+var my_rand_bounce := false # after a kick, the next wall/ceiling bounce goes a random way
 var my_kick_count := 0
 var my_alive  := true
 var my_ramp_t := 0.0
@@ -328,17 +329,28 @@ func _update(delta: float) -> void:
 			var dir_x := (my_ball.x - my_x) * 1.3
 			var rnd_x := randf_range(-KICK_RAND_X, KICK_RAND_X)
 			my_bvel   = Vector2(dir_x + rnd_x, KICK_VEL_Y) * my_speed
+			my_rand_bounce = true   # next bounce sends it a random direction
 
 	# ── Ball physics ─────────────────────────────────────────────────────────
 	my_bvel.y += GRAVITY * delta
 	my_ball   += my_bvel * delta
 
 	if my_ball.x - BALL_R < WALL_L:
-		my_ball.x = WALL_L + BALL_R;  my_bvel.x =  absf(my_bvel.x) * BOUNCE_DAMP
+		my_ball.x = WALL_L + BALL_R
+		if my_rand_bounce:
+			my_bvel.x = randf_range(60.0, 320.0); my_rand_bounce = false   # kicked: random rightward
+		else:
+			my_bvel.x = absf(my_bvel.x) * BOUNCE_DAMP
 	elif my_ball.x + BALL_R > WALL_R:
-		my_ball.x = WALL_R - BALL_R;  my_bvel.x = -absf(my_bvel.x) * BOUNCE_DAMP
+		my_ball.x = WALL_R - BALL_R
+		if my_rand_bounce:
+			my_bvel.x = -randf_range(60.0, 320.0); my_rand_bounce = false  # kicked: random leftward
+		else:
+			my_bvel.x = -absf(my_bvel.x) * BOUNCE_DAMP
 	if my_ball.y - BALL_R < CEILING_Y:
 		my_ball.y = CEILING_Y + BALL_R; my_bvel.y = absf(my_bvel.y) * BOUNCE_DAMP
+		if my_rand_bounce:
+			my_bvel.x = randf_range(-320.0, 320.0); my_rand_bounce = false  # kicked: random sideways
 
 	if my_ball.y + BALL_R >= GROUND_Y:
 		my_alive = false
