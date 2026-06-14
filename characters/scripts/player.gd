@@ -35,7 +35,11 @@ const PERSON_LEG_DIR := "res://assets/leg kick/"
 const PERSON_JUMP_DIR := "res://assets/jump/"
 const PERSON_HARD_DIR := "res://assets/hard hit/"
 const PERSON_IDLE_DIR := "res://assets/idle/"
+const PERSON_BLOCK_DIR := "res://assets/block/"
+const PERSON_DEATH_DIR := "res://assets/death/"
 const SCOTISH_PIPE_IMG := "res://assets/bagpipe.png"
+# Single drawn block pose per fighter (filename index in assets/block/).
+const PERSON_BLOCK_FRAME := {"english": 20, "georgian": 20, "scotish": 3}
 # walk/hand/leg/hard = frame counts; jump = explicit (sparse) frame numbers;
 # dash = a single hard-hit frame reused as the dash pose; fig_h/feet =
 # drawn-figure height and feet offset below the 1000px canvas center (from
@@ -47,15 +51,49 @@ const PERSON_SETS := {
 	"scotish":  {"base": "scotish man",  "walk": 12, "idle": 12, "hand": 6, "leg": 10, "hard": 14, "jump": [0, 6, 17],  "dash": 3, "fig_h": 922, "feet": 449, "pipe": true},
 }
 
-# Arcade (MK-style) attack tuning -- fast and committed. dur = whole-move
-# seconds; hit = startup as a fraction of dur; active = active-window fraction.
-# The drawn swing plays once across the move (kept readable), the hit lands
-# snappily mid-swing, and recovery is short: quick, punchy strikes.
-const PERSON_ATK_DUR := {"light": 0.20, "medium": 0.26, "heavy": 0.40, "air": 0.30}
-const PERSON_ATK_HIT := {"light": 0.40, "medium": 0.42, "heavy": 0.45, "air": 0.22}
-const PERSON_ATK_ACTIVE := {"light": 0.30, "medium": 0.26, "heavy": 0.22, "air": 0.55}
-# Map each attack to the animation whose frame count drives its playback speed.
-const PERSON_ATK_ANIM := {"light": "hand", "medium": "leg", "heavy": "hard", "air": "leg"}
+# ── Mortal-Kombat-faithful animation + combat tuning ──────────────────────────
+# Investigated against the MrezaDorudian/Mortal-Kombat Godot project. MK's "fast
+# arcade" feel comes from FEW frames played at a LOW framerate: a punch is 3
+# frames over 0.3s, a kick 5-8 frames, and EVERYTHING plays at ~10fps. Distinct,
+# readable poses snap (windup -> impact -> recoil) instead of a smooth blur.
+const PERSON_ANIM_FPS := 10.0   # MK plays every animation at ~10 frames/second.
+
+# Which sub-frames of each (over-detailed) hand-drawn swing we keep, per fighter.
+# Evenly sampled across the full range so windup / impact / recoil all survive.
+# light(hand)=3 frames, medium(leg)=5, heavy(hard)=6 -- matching MK move lengths.
+const PERSON_CUT_FRAMES := {
+	"english":  {"hand": [0, 3, 5],   "leg": [0, 2, 4, 6, 7], "hard": [0, 3, 6, 9, 12, 15]},
+	"georgian": {"hand": [0, 2, 4],   "leg": [0, 2, 5, 7, 9], "hard": [0, 5, 10, 15, 21, 26]},
+	"scotish":  {"hand": [0, 3, 5],   "leg": [0, 2, 5, 7, 9], "hard": [0, 3, 6, 9, 11, 13]},
+}
+const PERSON_WALK_FRAMES := [0, 2, 3, 5, 6, 8, 9, 11]   # 8 of 12, MK walk = 9 frames.
+
+# MK-style frame data in 60fps physics frames: startup / active / recovery, sized
+# so the move ENDS exactly when its ~10fps animation ends (N frames / 10fps).
+#   light : 3 frames @10fps = 18f = 0.30s   (MK punch = 0.3s)
+#   medium: 5 frames @10fps = 30f = 0.50s   (MK light kick = 0.5s)
+#   heavy : 6 frames @10fps = 36f = 0.60s   (MK roundhouse = 0.8s)
+#   air   : 5 frames @10fps = 30f = 0.50s
+const PERSON_ATK_TIMING := {
+	"light":  {"startup": 7,  "active": 5,  "recovery": 6},
+	"medium": {"startup": 12, "active": 6,  "recovery": 12},
+	"heavy":  {"startup": 16, "active": 7,  "recovery": 13},
+	"air":    {"startup": 6,  "active": 16, "recovery": 8},
+}
+# MK anti-spam: after taking a hit you are briefly invulnerable so a fast attack
+# can't mash-lock you (MK's `time_flag`; MK uses 2.0s but that makes the match
+# turn-based, so we use a snappier arcade window). This is the ONLY anti-spam --
+# no combo proration, because MK has no combos: one move at a time until it ends.
+const HIT_INVULN_TIME := 1.0
+# MK deals a FLAT amount per clean hit regardless of which strike (its code does
+# `health -= 15` for every hit). We mirror that: all normals do the same damage.
+const PERSON_HIT_DAMAGE := 15
+const PERSON_HIT_KNOCKBACK := 360.0   # uniform modest stagger, MK-style
+const PERSON_HIT_STUN := 20           # uniform short hitstun (~0.33s)
+# Real-arcade hitstop: a small, UNIFORM impact freeze on contact (~0.05s) so hits
+# feel solid like a real fighting game -- but equal across every strike, so no
+# move stalls mid-swing or "feels slower" up close (that was the old 6/8/12 bug).
+const PERSON_HITSTOP := 3
 
 # Arcade (Mortal-Kombat-style) feel: fast crisp walks, big snappy jumps, quick
 # dashes. Movement is set directly each frame (no momentum drift), so releasing
@@ -190,6 +228,7 @@ var _recent_received_attacks: Array[String] = []
 var _last_received_attacker_id := 0
 var _repeat_hit_timer := 0.0
 var _network_sync_timer := 0.0
+var _hit_invuln_timer := 0.0   # MK post-hit invulnerability window (anti-spam)
 
 var _attack_defs := {
 	"light": {
@@ -515,18 +554,32 @@ func _build_person_frames(info: Dictionary) -> void:
 	var frames := SpriteFrames.new()
 	frames.remove_animation("default")
 
-	_add_person_anim(frames, "walk", PERSON_WALK_DIR, base, 0, walk_n - 1, 14.0, true, false)
-	_add_person_anim(frames, "walk_back", PERSON_WALK_DIR, base, 0, walk_n - 1, 14.0, true, true)
-	# Attack playback speeds are set in _retune_person_attacks (fit to each move).
-	_add_person_anim(frames, "arm_attack", PERSON_HAND_DIR, base, 0, hand_n - 1, 16.0, false, false)
-	_add_person_anim(frames, "leg_attack", PERSON_LEG_DIR, base, 0, leg_n - 1, 16.0, false, false)
-	_add_person_anim(frames, "heavy_attack", PERSON_HARD_DIR, base, 0, hard_n - 1, 16.0, false, false)
-	_add_person_anim(frames, "air_attack", PERSON_LEG_DIR, base, 0, leg_n - 1, 16.0, false, false)
+	# MK feel: few frames at ~10fps. Walk uses a trimmed 8-frame loop, and each
+	# attack keeps only a handful of distinct poses (see PERSON_CUT_FRAMES).
+	var cut: Dictionary = PERSON_CUT_FRAMES.get(character_key, {})
+	var hand_frames: Array = cut.get("hand", range(0, hand_n))
+	var leg_frames: Array = cut.get("leg", range(0, leg_n))
+	var hard_frames: Array = cut.get("hard", range(0, hard_n))
+	_add_person_anim_list(frames, "walk", PERSON_WALK_DIR, base, PERSON_WALK_FRAMES, PERSON_ANIM_FPS, true, false)
+	_add_person_anim_list(frames, "walk_back", PERSON_WALK_DIR, base, PERSON_WALK_FRAMES, PERSON_ANIM_FPS, true, true)
+	# Attack playback speeds are confirmed in _retune_person_attacks (fixed ~10fps).
+	_add_person_anim_list(frames, "arm_attack", PERSON_HAND_DIR, base, hand_frames, PERSON_ANIM_FPS, false, false)
+	_add_person_anim_list(frames, "leg_attack", PERSON_LEG_DIR, base, leg_frames, PERSON_ANIM_FPS, false, false)
+	_add_person_anim_list(frames, "heavy_attack", PERSON_HARD_DIR, base, hard_frames, PERSON_ANIM_FPS, false, false)
+	_add_person_anim_list(frames, "air_attack", PERSON_LEG_DIR, base, leg_frames, PERSON_ANIM_FPS, false, false)
 	_add_person_anim_list(frames, "jump_start", PERSON_JUMP_DIR, base, info["jump"], 10.0, false, false)
 	_add_person_anim_list(frames, "dash", PERSON_WALK_DIR, base, [info["dash"]], 6.0, false, false)
 	_add_person_anim(frames, "idle", PERSON_IDLE_DIR, base, 0, int(info["idle"]) - 1, 9.0, true, false)
-	for still in ["slide", "hit", "death"]:
+	for still in ["slide", "hit"]:
 		_add_person_anim(frames, still, PERSON_IDLE_DIR, base, 0, 0, 6.0, false, false)
+	# Block: hold the drawn block pose (replaces the old blue tint).
+	var block_idx: int = int(PERSON_BLOCK_FRAME.get(character_key, 0))
+	_add_person_anim_list(frames, "block", PERSON_BLOCK_DIR, base, [block_idx], 6.0, false, false)
+	# Death: hold the drawn death pose (single un-numbered file: "<base>.png").
+	frames.add_animation("death")
+	frames.set_animation_speed("death", 1.0)
+	frames.set_animation_loop("death", false)
+	frames.add_frame("death", load("%s%s.png" % [PERSON_DEATH_DIR, base]))
 	_add_person_anim(frames, "full_combo", PERSON_LEG_DIR, base, 0, leg_n - 1, 16.0, false, false)
 	# Scotsman holds the bagpipe ("windpipe") pose while the air is blown out --
 	# the trumpet special plays this during its wind-up (see TrumpetBlast).
@@ -547,40 +600,31 @@ func _build_person_frames(info: Dictionary) -> void:
 	sprite.position = Vector2(0.0, 124.0 - float(info["feet"]) * s)
 
 
-# Arcade timing: each normal lasts a fixed, SHORT duration (PERSON_ATK_DUR),
-# the hit comes out snappily mid-swing, and the drawn frames are played once
-# across the move so the swing still reads. Fast and committed, MK-style. Also
-# gives the air kick a roomy, downward-reaching hitbox so a jump-in connects.
-func _retune_person_attacks(info: Dictionary) -> void:
-	for atk in PERSON_ATK_DUR.keys():
-		var n := maxi(1, int(info[str(PERSON_ATK_ANIM[atk])]))
-		var dur := float(PERSON_ATK_DUR[atk])
-		var total := maxi(5, int(round(dur * 60.0)))
-		var startup := maxi(2, int(round(float(total) * float(PERSON_ATK_HIT[atk]))))
-		var active := maxi(2, int(round(float(total) * float(PERSON_ATK_ACTIVE[atk]))))
-		var recovery := maxi(2, total - startup - active)
+# MK-faithful timing: each normal is a SHORT, fixed move whose length matches
+# its trimmed ~10fps animation, the hit lands mid-swing, and -- crucially -- the
+# move is NOT cancelable (MK has no combos: one strike at a time, committed until
+# it finishes). Damage is chunky and knockback modest; the air kick gets a roomy,
+# downward-reaching hitbox so a jump-in connects.
+func _retune_person_attacks(_info: Dictionary) -> void:
+	for atk in PERSON_ATK_TIMING.keys():
+		var t: Dictionary = PERSON_ATK_TIMING[atk]
 		var def: Dictionary = _attack_defs[atk]
-		def["startup"] = startup
-		def["active"] = active
-		def["recovery"] = recovery
-		# Cancel as soon as the active window opens (combined with the "must have
-		# landed" rule, this means you may chain the instant the hit connects).
-		def["cancel_frame"] = startup
-		# Play the whole drawn swing once across the move so it stays readable.
-		if sprite != null and sprite.sprite_frames != null:
-			sprite.sprite_frames.set_animation_speed(str(def["animation"]), float(n) / dur)
-	# Two clean MK-style strings, no jab-infinite:
-	#   J -> K -> L  (hand -> leg -> hard hit)   and   J -> L / K -> L.
-	_attack_defs["light"]["chains"] = ["medium", "heavy"]
-	_attack_defs["medium"]["chains"] = ["heavy"]
-	_attack_defs["heavy"]["chains"] = []
-	# Combo links barely push (so the foe stays in range + hitstun for the next
-	# hit); only the heavy finisher launches. Enough hitstun to link cleanly.
-	_attack_defs["light"]["hit_knockback"] = 70.0
-	_attack_defs["light"]["hitstun"] = 18
-	_attack_defs["medium"]["hit_knockback"] = 120.0
-	_attack_defs["medium"]["hitstun"] = 22
-	_attack_defs["heavy"]["hit_knockback"] = 720.0
+		def["startup"] = int(t["startup"])
+		def["active"] = int(t["active"])
+		def["recovery"] = int(t["recovery"])
+		def["cancel_frame"] = 999   # MK: no cancels.
+		def["chains"] = []          # MK: no chained combos.
+		# Every drawn swing plays at MK's fixed ~10fps (frame count = duration).
+		if sprite != null and sprite.sprite_frames != null and sprite.sprite_frames.has_animation(str(def["animation"])):
+			sprite.sprite_frames.set_animation_speed(str(def["animation"]), PERSON_ANIM_FPS)
+	# Literal MK: every clean hit does the same flat damage / stagger, regardless
+	# of which strike. The post-hit invuln window (HIT_INVULN_TIME) -- not
+	# proration -- is what stops spamming.
+	for atk in ["light", "medium", "heavy", "air"]:
+		_attack_defs[atk]["damage"] = PERSON_HIT_DAMAGE
+		_attack_defs[atk]["hit_knockback"] = PERSON_HIT_KNOCKBACK
+		_attack_defs[atk]["hitstun"] = PERSON_HIT_STUN
+		_attack_defs[atk]["hitstop"] = PERSON_HITSTOP   # MK: no big impact freeze
 	# A grounded foe's hurtbox spans y -144..0. Tall, downward-reaching air box
 	# so a descending kick connects across a wide height band.
 	var air: Dictionary = _attack_defs["air"]
@@ -729,26 +773,31 @@ func _process_attack(delta: float) -> void:
 	if _special_requested and _state_frame <= SPECIAL_CANCEL_FRAMES and _try_start_special():
 		return
 	var data := _attack_data()
-	var scale := _attack_movement_scale(data)
-	if is_on_floor():
-		velocity.x = _ground_speed_for_input(_move_dir) * scale
-	elif _move_dir != 0:
-		velocity.x = float(_move_dir) * AIR_SPEED * scale
+	if _is_simple():
+		# MK roots you for grounded normals (committed strike); air kicks keep
+		# their arc. No queue/cancel -- one move at a time, locked until it ends.
+		if is_on_floor():
+			velocity.x = 0.0
+	else:
+		var scale := _attack_movement_scale(data)
+		if is_on_floor():
+			velocity.x = _ground_speed_for_input(_move_dir) * scale
+		elif _move_dir != 0:
+			velocity.x = float(_move_dir) * AIR_SPEED * scale
 
-	_try_queue_attack()
-	# A queued follow-up means the move already landed and is cancelable, so chain
-	# into it NOW -- cancel the recovery. This is what makes a combo string flow
-	# (the next hit comes out while the opponent is still in hitstun).
-	if _queued_attack != "" and _state_frame < _attack_total_frames(data):
-		var chained := _queued_attack
-		_queued_attack = ""
-		_start_attack(chained)
-		return
+		_try_queue_attack()
+		# A queued follow-up means the move already landed and is cancelable, so
+		# chain into it NOW -- cancel the recovery (placeholder fighter only).
+		if _queued_attack != "" and _state_frame < _attack_total_frames(data):
+			var chained := _queued_attack
+			_queued_attack = ""
+			_start_attack(chained)
+			return
 
 	_update_attack_hitbox_for_frame()
 
 	if _state_frame >= _attack_total_frames(data):
-		if _queued_attack != "":
+		if not _is_simple() and _queued_attack != "":
 			var next_attack := _queued_attack
 			_queued_attack = ""
 			_start_attack(next_attack)
@@ -760,8 +809,7 @@ func _process_block(delta: float) -> void:
 	guard_meter = maxf(guard_meter - GUARD_HOLD_DRAIN * delta, 0.0)
 	_guard_regen_delay = GUARD_REGEN_DELAY
 	velocity.x = 0.0
-	_set_guard_visual()
-	_play_anim("idle")
+	_apply_block_visual()
 
 	if guard_meter <= 0.0 or not _guard_held:
 		_enter_state(FighterState.IDLE)
@@ -794,6 +842,7 @@ func _update_global_timers(delta: float) -> void:
 	_dash_cooldown = maxf(_dash_cooldown - delta, 0.0)
 	_slide_cooldown = maxf(_slide_cooldown - delta, 0.0)
 	_special_cooldown = maxf(_special_cooldown - delta, 0.0)
+	_hit_invuln_timer = maxf(_hit_invuln_timer - delta, 0.0)
 	_repeat_hit_timer = maxf(_repeat_hit_timer - delta, 0.0)
 	if _repeat_hit_timer <= 0.0:
 		_recent_received_attacks.clear()
@@ -1107,6 +1156,10 @@ func _start_slide(direction: int) -> void:
 func receive_hit(amount: int, attacker: Node2D, knockback: float = 260.0, attack_name := "") -> Dictionary:
 	if _is_remote_network_player() or state == FighterState.DEAD:
 		return {"connected": false}
+	# MK anti-spam: while still invulnerable from the last hit, the attack passes
+	# through harmlessly (no damage, no block) -- you can't be mash-locked.
+	if _hit_invuln_timer > 0.0:
+		return {"connected": false}
 
 	var data := {}
 	if attacker != null and attacker.has_method("get_attack_payload"):
@@ -1131,6 +1184,7 @@ func receive_hit(amount: int, attacker: Node2D, knockback: float = 260.0, attack
 
 
 func _receive_clean_hit(data: Dictionary, attacker: Node2D, attack_name: String) -> Dictionary:
+	_hit_invuln_timer = HIT_INVULN_TIME   # MK: brief post-hit invulnerability.
 	var attacker_id := int(attacker.get("player_id")) if attacker != null else 0
 	var proration := _register_received_attack(attacker_id, attack_name)
 	var damage := maxi(1, int(ceil(float(data["damage"]) * float(proration["damage_scale"]))))
@@ -1149,6 +1203,7 @@ func _receive_clean_hit(data: Dictionary, attacker: Node2D, attack_name: String)
 		state = FighterState.DEAD
 		velocity.x = float(hit_from_dir) * float(data["hit_knockback"])
 		velocity.y = minf(velocity.y, -180.0)
+		_reset_visual_tint()
 		_play_anim("death", true)
 		_start_hitstop(int(data["hitstop"]))
 		_broadcast_critical_network_state()
@@ -1188,8 +1243,7 @@ func _receive_blocked_hit(data: Dictionary, attacker: Node2D) -> Dictionary:
 	_set_attack_hitbox_active(false)
 	_active_attack = ""
 	_queued_attack = ""
-	_set_guard_visual()
-	_play_anim("idle", true)
+	_apply_block_visual(true)
 	_start_hitstop(int(data["hitstop"]))
 	if attacker != null:
 		if attacker.has_method("_start_hitstop"):
@@ -1200,6 +1254,7 @@ func _receive_blocked_hit(data: Dictionary, attacker: Node2D) -> Dictionary:
 
 
 func _receive_guard_break(data: Dictionary, attacker: Node2D, attacker_id: int, hit_from_dir: int) -> Dictionary:
+	_hit_invuln_timer = HIT_INVULN_TIME   # MK: brief post-hit invulnerability.
 	var damage := maxi(1, int(data["chip_damage"]) + 8)
 	health = maxi(health - damage, 0)
 	health_changed.emit(health, max_health)
@@ -1214,6 +1269,7 @@ func _receive_guard_break(data: Dictionary, attacker: Node2D, attacker_id: int, 
 		state = FighterState.DEAD
 		velocity.x = float(hit_from_dir) * float(data["hit_knockback"])
 		velocity.y = minf(velocity.y, -180.0)
+		_reset_visual_tint()
 		_play_anim("death", true)
 		_broadcast_critical_network_state()
 		died.emit(player_id)
@@ -1232,7 +1288,8 @@ func _receive_guard_break(data: Dictionary, attacker: Node2D, attacker_id: int, 
 
 
 func _register_received_attack(attacker_id: int, attack_name: String) -> Dictionary:
-	if attacker_id == 0 or attack_name == "":
+	# MK fighters use the post-hit invuln window instead of damage proration.
+	if _is_simple() or attacker_id == 0 or attack_name == "":
 		return {"damage_scale": 1.0, "hitstun_penalty": 0}
 	if attacker_id != _last_received_attacker_id or _repeat_hit_timer <= 0.0:
 		_recent_received_attacks.clear()
@@ -1336,6 +1393,7 @@ func apply_super_damage(amount: int) -> void:
 		_set_attack_hitbox_active(false)
 		_active_attack = ""
 		_queued_attack = ""
+		_reset_visual_tint()
 		_play_anim("death", true)
 		died.emit(player_id)
 	else:
@@ -1353,6 +1411,7 @@ func reset_fighter(start_position: Vector2, reset_health := true) -> void:
 	_slide_cooldown = 0.0
 	_slide_lockout = false
 	_hitstop_timer = 0.0
+	_hit_invuln_timer = 0.0
 	_active_attack = ""
 	_queued_attack = ""
 	_hit_targets.clear()
@@ -1996,6 +2055,8 @@ func _attack_movement_scale(data: Dictionary) -> float:
 
 
 func _start_hitstop(frames: int) -> void:
+	if frames <= 0:
+		return
 	_hitstop_timer = maxf(_hitstop_timer, float(frames) * FRAME_TIME)
 	sprite.speed_scale = 0.0
 
@@ -2006,6 +2067,17 @@ func _set_guard_visual() -> void:
 
 func _reset_visual_tint() -> void:
 	sprite.modulate = Color.WHITE
+
+
+# Show the block pose while guarding. Fighters with a drawn block sprite hold it
+# (no tint); the placeholder (no block art) falls back to the old blue idle.
+func _apply_block_visual(force := false) -> void:
+	if sprite.sprite_frames != null and sprite.sprite_frames.has_animation("block"):
+		_reset_visual_tint()
+		_play_anim("block", force)
+	else:
+		_set_guard_visual()
+		_play_anim("idle", force)
 
 
 func _play_anim(animation_name: String, force := false) -> void:

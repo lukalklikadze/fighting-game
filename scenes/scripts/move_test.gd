@@ -6,7 +6,7 @@ extends Node2D
 ##
 ##   A / D  move        W  jump          J  hand kick (light)
 ##   K  leg kick        L  hard hit       L L L  super
-##   I  block
+##   I  block      (Mortal-Kombat feel: one committed move at a time, no combos)
 ##   1 / 2 / 3  English / Georgian / Scotsman      Q  cycle character
 ##   R  reset positions                            Esc  quit
 
@@ -75,7 +75,8 @@ func _on_died(_pid: int) -> void:
 	if _resetting:
 		return
 	_resetting = true
-	await get_tree().create_timer(0.8).timeout
+	# Hold the death pose for a beat, then pop both back to their start positions.
+	await get_tree().create_timer(1.5).timeout
 	_reset()
 
 
@@ -134,7 +135,7 @@ func _build_hud() -> void:
 	var combos := _make_label(20, Color(0.55, 0.12, 0.10, 1.0))
 	combos.position = Vector2(40, 100)
 	combos.size = Vector2(1400, 30)
-	combos.text = "Combos (link as hits land):   J - K - L    |    J - L    |    K - L"
+	combos.text = "Mortal-Kombat style: one move at a time (no combos). Brief invulnerability after each hit. ~10fps snappy poses."
 	layer.add_child(combos)
 
 
