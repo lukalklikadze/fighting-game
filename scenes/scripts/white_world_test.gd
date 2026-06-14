@@ -120,6 +120,7 @@ var _victory_label: Label
 var _msub := MatchSub.FIGHT
 var _bar := {1: 1, 2: 1}
 var _super_connected := false
+var _last_minigame := 0               # host-tracked: never run the same minigame twice in a row
 
 # Pause state (host-authoritative, mirrored on both peers).
 var _pause_active := false
@@ -127,6 +128,7 @@ var _pause_is_intro := false      # true while showing the pre-fight instruction
 var _pauser_pid := 0
 var _pause_time_left := 0.0
 var _pause_down := false
+var _super_down := false
 var _pause_ready_down := false
 var _pause_count := {1: 0, 2: 0}      # pauses each player has used this match
 var _pause_ready := {1: false, 2: false}
@@ -214,6 +216,7 @@ func _process(delta: float) -> void:
 					_process_match_end()
 				_handle_debug_reset()
 				_handle_pause_input()
+				_handle_super_input()
 
 
 func _build_interface() -> void:
@@ -1152,6 +1155,7 @@ func _start_match(client_peer_id: int, p1_character: int, p2_character: int) -> 
 	# Start the lives + super-meter loop.
 	_bar = {1: 1, 2: 1}
 	_pause_count = {1: 0, 2: 0}
+	_last_minigame = 0
 	_clear_pause_state()
 	_msub = MatchSub.FIGHT
 	player_one.set("super_fill_enabled", true)
@@ -1352,7 +1356,26 @@ func _resume_round(b1: int, b2: int) -> void:
 #  Super meter -> networked minigame
 # ===========================================================================
 
-func _on_super_full(pid: int) -> void:
+func _on_super_full(_pid: int) -> void:
+	# The minigame is now OPTIONAL: a full meter does nothing on its own — the
+	# player launches the contest by pressing SPACE (see _handle_super_input).
+	pass
+
+
+func _handle_super_input() -> void:
+	# Edge-detected SPACE launches the contest, but only if your meter is full.
+	var pressed := Input.is_physical_key_pressed(KEY_SPACE)
+	if pressed and not _super_down and _msub == MatchSub.FIGHT and not _pause_active:
+		_try_use_super()
+	_super_down = pressed
+
+
+func _try_use_super() -> void:
+	var pid := _local_player_id()
+	var fighter: Node2D = player_one if pid == 1 else player_two
+	# Checked on the local (authoritative) fighter, so the value is exact.
+	if float(fighter.get("super_meter")) < float(fighter.get("super_max")):
+		return
 	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
 		_rpc_request_super.rpc_id(1, pid)
 	else:
@@ -1371,10 +1394,22 @@ func _host_begin_super(attacker: int) -> void:
 	# random minigame and broadcasts it so both peers run the same one.
 	if _screen != ScreenState.MATCH or _msub != MatchSub.FIGHT:
 		return
-	var which := _rng.randi_range(1, TOTAL_SUPERS)
+	var which := _pick_minigame()
 	if multiplayer.has_multiplayer_peer():
 		_rpc_begin_super.rpc(which, attacker)
 	_run_super(which, attacker)
+
+
+func _pick_minigame() -> int:
+	# Random, but never the same minigame type twice in a row.
+	var pool: Array[int] = []
+	for i in range(1, TOTAL_SUPERS + 1):
+		if i != _last_minigame:
+			pool.append(i)
+	if pool.is_empty():
+		pool.append(_rng.randi_range(1, TOTAL_SUPERS))
+	_last_minigame = pool[_rng.randi_range(0, pool.size() - 1)]
+	return _last_minigame
 
 
 @rpc("authority", "call_remote", "reliable")
