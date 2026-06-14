@@ -215,7 +215,6 @@ func _process(delta: float) -> void:
 			else:
 				if _msub == MatchSub.FIGHT:
 					_process_match_end()
-				_handle_debug_reset()
 				_handle_pause_input()
 				_handle_super_input()
 

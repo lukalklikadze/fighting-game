@@ -1391,22 +1391,14 @@ func grant_deal_meter(damage: int) -> void:
 func apply_super_damage(amount: int) -> void:
 	if amount <= 0 or state == FighterState.DEAD:
 		return
-	health = maxi(health - amount, 0)
+	# A super only CHIPS the current health bar — it never KOs/restarts a bar.
+	# The loser is left at 1 HP at minimum; the bar stays, only damage is applied.
+	health = maxi(health - amount, 1)
 	health_changed.emit(health, max_health)
 	took_hit.emit(amount, 0)
-	if health <= 0:
-		state = FighterState.DEAD
-		velocity = Vector2(0.0, -180.0)
-		_set_attack_hitbox_active(false)
-		_active_attack = ""
-		_queued_attack = ""
-		_reset_visual_tint()
-		_play_anim("death", true)
-		died.emit(player_id)
-	else:
-		sprite.modulate = Color(1.0, 0.72, 0.72, 1.0)
-		_enter_state(FighterState.HITSTUN, 18)
-		_play_anim("hit", true)
+	sprite.modulate = Color(1.0, 0.72, 0.72, 1.0)
+	_enter_state(FighterState.HITSTUN, 18)
+	_play_anim("hit", true)
 
 
 func reset_fighter(start_position: Vector2, reset_health := true) -> void:
