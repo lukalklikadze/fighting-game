@@ -35,6 +35,7 @@ const MATCHUP_DIALOGS := {
 const MONOLOGUE_SFX := {
 	"scotish_to_georgian": preload("res://sounds/Shit Talk/scott.wav"),
 	"scotish_to_english": preload("res://sounds/Shit Talk/scott.wav"),
+	"english_to_georgian": preload("res://sounds/Shit Talk/eng vs geo.wav"),
 }
 
 # Voice clip for the SECOND line (answer); the scene then holds for the clip's
@@ -42,6 +43,7 @@ const MONOLOGUE_SFX := {
 const DIALOG_SFX := {
 	"georgian_to_scotish": preload("res://sounds/Shit Talk/jotia vs scot.wav"),
 	"georgian_to_english": preload("res://sounds/Shit Talk/jotia vs eng.wav"),
+	"english_to_scotish": preload("res://sounds/Shit Talk/eng vs scott.wav"),
 }
 const ANSWER_TAIL := 1.0   # hold after the answer when there's no clip
 const MONOLOGUE_INTRO_DELAY := 1.0   # beat before the first dialogue box appears

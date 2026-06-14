@@ -107,6 +107,27 @@ const GRAVITY := 3050.0
 const MAX_FALL_SPEED := 1750.0
 const DASH_SPEED := 1520.0
 const DEATH_ASCEND_SPEED := -1000.0  # on death the fighter shoots up "to heaven", off-screen
+
+# ── Movement SFX ──────────────────────────────────────────────────────────────
+# Jump and dash pick a random clip from three each time; walking uses a distinct
+# footstep clip per character (only two clips, so one is shared).
+const MOVE_JUMP_SFX := [
+	preload("res://sounds/SFX/Movement/jump1.wav"),
+	preload("res://sounds/SFX/Movement/jump2.wav"),
+	preload("res://sounds/SFX/Movement/jump3.wav"),
+]
+const MOVE_DASH_SFX := [
+	preload("res://sounds/SFX/Movement/dash1.wav"),
+	preload("res://sounds/SFX/Movement/dash2.wav"),
+	preload("res://sounds/SFX/Movement/dash3.wav"),
+]
+const MOVE_WALK_1 := preload("res://sounds/SFX/Movement/walk1.wav")
+const MOVE_WALK_2 := preload("res://sounds/SFX/Movement/walk2.wav")
+const MOVE_WALK_BY_CHAR := {
+	"english": MOVE_WALK_1,
+	"georgian": MOVE_WALK_2,
+	"scotish": MOVE_WALK_1,
+}
 const DASH_FRAMES := 8
 const DASH_COOLDOWN := 0.42
 const SLIDE_SPEED := 1040.0
@@ -447,8 +468,14 @@ var _special_hit_defs := {
 }
 
 
+var _walk_sfx: AudioStreamPlayer2D
+var _move_oneshot_sfx: AudioStreamPlayer2D
+var _prev_sfx_anim := ""
+
+
 func _ready() -> void:
 	_bot_rng.randomize()
+	_setup_movement_sfx()
 	health = max_health
 	if attack_hitbox_shape.shape != null:
 		attack_hitbox_shape.shape = attack_hitbox_shape.shape.duplicate()
@@ -463,9 +490,46 @@ func _ready() -> void:
 	health_changed.emit(health, max_health)
 
 
+func _setup_movement_sfx() -> void:
+	_walk_sfx = AudioStreamPlayer2D.new()
+	_walk_sfx.volume_db = -6.0
+	add_child(_walk_sfx)
+	_move_oneshot_sfx = AudioStreamPlayer2D.new()
+	add_child(_move_oneshot_sfx)
+
+
+# Plays footsteps while walking and a random jump/dash clip on those animations.
+# Driven off sprite.animation so it works for both local and remote fighters
+# (the remote copy's animation is network-synced).
+func _update_movement_sfx() -> void:
+	if sprite == null or _walk_sfx == null:
+		return
+	var anim := str(sprite.animation)
+	var walking := anim == "walk" or anim == "walk_back"
+	if _walk_sfx.stream != null:
+		if walking and not _walk_sfx.playing:
+			_walk_sfx.play()
+		elif not walking and _walk_sfx.playing:
+			_walk_sfx.stop()
+	if anim != _prev_sfx_anim:
+		if anim == "jump_start":
+			_play_move_oneshot(MOVE_JUMP_SFX)
+		elif anim == "dash":
+			_play_move_oneshot(MOVE_DASH_SFX)
+	_prev_sfx_anim = anim
+
+
+func _play_move_oneshot(clips: Array) -> void:
+	if _move_oneshot_sfx == null or clips.is_empty():
+		return
+	_move_oneshot_sfx.stream = clips[_bot_rng.randi_range(0, clips.size() - 1)]
+	_move_oneshot_sfx.play()
+
+
 func _physics_process(delta: float) -> void:
 	_resolve_opponent()
 	_poll_key_edges()
+	_update_movement_sfx()   # runs for ALL fighters (local + remote) off the animation
 
 	if _is_remote_network_player():
 		return
@@ -603,6 +667,8 @@ func _build_person_frames(info: Dictionary) -> void:
 	var s := PERSON_TARGET_HEIGHT / float(info["fig_h"])
 	sprite.scale = Vector2(s, s)
 	sprite.position = Vector2(0.0, 124.0 - float(info["feet"]) * s)
+	if _walk_sfx != null:
+		_walk_sfx.stream = MOVE_WALK_BY_CHAR.get(character_key, MOVE_WALK_1)
 
 
 # MK-faithful timing: each normal is a SHORT, fixed move whose length matches
