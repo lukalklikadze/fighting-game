@@ -1,12 +1,31 @@
 extends Node2D
 class_name AirBlastEffect
 
-## Short-lived gust of air from the Scottish fighter's trumpet/bagpipe. Purely
-## cosmetic (the knock-back is applied by TrumpetBlast on the authority) plus it
-## owns the honk sound so every peer hears it.
+## Short-lived gust from the Scottish fighter's bagpipe. Purely cosmetic (the
+## knock-back is applied by TrumpetBlast on the authority) plus it owns the honk
+## sound so every peer hears it. The visual is the hand-drawn "bagpipe smoke"
+## sprite animation, blown out in front of the piper.
 
 const LIFETIME := 0.6
 const REACH := 340.0
+
+# Hand-drawn smoke puff frames. The art faces LEFT by default, so we mirror it
+# (flip_h) when the piper is facing right.
+const SMOKE_FRAMES := [
+	"res://assets/bagpipe smoke/Smoke VFX A1.png",
+	"res://assets/bagpipe smoke/Smoke VFX A2.png",
+	"res://assets/bagpipe smoke/Smoke VFX A3.png",
+	"res://assets/bagpipe smoke/Smoke VFX A4.png",
+	"res://assets/bagpipe smoke/Smoke VFX A5.png",
+	"res://assets/bagpipe smoke/Smoke VFX A6.png",
+	"res://assets/bagpipe smoke/Smoke VFX A7.png",
+	"res://assets/bagpipe smoke/Smoke VFX A8.png",
+	"res://assets/bagpipe smoke/Smoke VFX A9.png",
+]
+const SMOKE_SCALE := 6.0             # 48x32 source art -> ~288x192 gust
+const SMOKE_FORWARD := 54.0          # initial offset in front of the pipe
+# Travels outward to ~REACH over its lifetime so it reads as a gust blowing out.
+const SMOKE_TRAVEL_SPEED := 480.0
 
 # ── Swap this path to change the trumpet/bagpipe sound. ──
 # If the file is absent the move simply stays silent (no crash), so the game
@@ -15,6 +34,7 @@ const TRUMPET_SOUND := "res://assets/audio/trumpet.ogg"
 
 var _dir := 1
 var _age := 0.0
+var _smoke: AnimatedSprite2D = null
 
 
 func setup(origin: Vector2, dir: int) -> void:
@@ -23,6 +43,25 @@ func setup(origin: Vector2, dir: int) -> void:
 	add_to_group("special_effects")
 	z_index = 50
 	_play_sound()
+	_build_smoke()
+
+
+func _build_smoke() -> void:
+	var frames := SpriteFrames.new()
+	frames.remove_animation("default")
+	frames.add_animation("smoke")
+	frames.set_animation_loop("smoke", false)
+	frames.set_animation_speed("smoke", float(SMOKE_FRAMES.size()) / LIFETIME)
+	for path in SMOKE_FRAMES:
+		frames.add_frame("smoke", load(path))
+
+	_smoke = AnimatedSprite2D.new()
+	_smoke.sprite_frames = frames
+	_smoke.flip_h = _dir > 0          # art faces LEFT by default -> mirror when blowing right
+	_smoke.scale = Vector2(SMOKE_SCALE, SMOKE_SCALE)
+	_smoke.position = Vector2(float(_dir) * SMOKE_FORWARD, 0.0)
+	add_child(_smoke)
+	_smoke.play("smoke")
 
 
 func _play_sound() -> void:
@@ -39,23 +78,7 @@ func _play_sound() -> void:
 
 func _process(delta: float) -> void:
 	_age += delta
-	queue_redraw()
+	if _smoke != null:
+		_smoke.position.x += float(_dir) * SMOKE_TRAVEL_SPEED * delta
 	if _age >= LIFETIME:
 		queue_free()
-
-
-func _draw() -> void:
-	var t := clampf(_age / LIFETIME, 0.0, 1.0)
-	var alpha := (1.0 - t)
-	# Bold colors so the gust reads clearly against the white arena.
-	var deep := Color(0.10, 0.40, 0.85, alpha)        # strong blue
-	var mid := Color(0.35, 0.65, 1.0, alpha * 0.95)   # lighter inner
-	var base_angle := 0.0 if _dir > 0 else PI
-
-	# Expanding concentric gust arcs (circular wave lines), fanning out in the
-	# facing direction — the only element of the blast.
-	for i in range(6):
-		var radius := lerpf(34.0, REACH, t) - float(i) * 38.0
-		if radius <= 8.0:
-			continue
-		draw_arc(Vector2.ZERO, radius, base_angle - 0.9, base_angle + 0.9, 28, deep if i % 2 == 0 else mid, 8.0)

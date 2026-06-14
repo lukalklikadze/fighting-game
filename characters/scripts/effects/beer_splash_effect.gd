@@ -9,8 +9,8 @@ class_name BeerSplashEffect
 const LIFETIME := 6.5
 const FADE_TIME := 2.2               # smooth fade over the final stretch
 const GROW_TIME := 0.28
-const PUDDLE_RX := 80.0
-const PUDDLE_RY := 17.0
+const PUDDLE_RX := 132.0              # large enough to read clearly (≈ the hit zone)
+const PUDDLE_RY := 30.0
 
 # Hazard: anyone standing in the spill keeps taking damage on this interval.
 const HIT_INTERVAL := 0.7            # seconds between damage ticks
@@ -93,12 +93,13 @@ func _draw() -> void:
 	var rx := PUDDLE_RX * grow
 	var ry := PUDDLE_RY * grow
 
-	# Beer puddle — layered amber ellipses.
-	_draw_ellipse(Vector2.ZERO, rx, ry, Color(0.78, 0.58, 0.15, 0.55 * fade))
-	_draw_ellipse(Vector2.ZERO, rx * 0.62, ry * 0.7, Color(0.92, 0.75, 0.28, 0.5 * fade))
+	# Beer puddle — layered DARK amber ellipses (high alpha so it reads clearly).
+	_draw_ellipse(Vector2.ZERO, rx, ry, Color(0.34, 0.21, 0.04, 0.92 * fade))
+	_draw_ellipse(Vector2.ZERO, rx * 0.78, ry * 0.82, Color(0.46, 0.29, 0.07, 0.9 * fade))
+	_draw_ellipse(Vector2.ZERO, rx * 0.5, ry * 0.6, Color(0.60, 0.40, 0.11, 0.85 * fade))
 
 	# Foam — a frothy cream cap with scattered bubbles, the signature of beer.
-	_draw_ellipse(Vector2(0.0, -ry * 0.18), rx * 0.66, ry * 0.62, Color(0.98, 0.95, 0.82, 0.55 * fade))
+	_draw_ellipse(Vector2(0.0, -ry * 0.18), rx * 0.66, ry * 0.62, Color(0.90, 0.83, 0.62, 0.6 * fade))
 	var foam := Color(0.99, 0.97, 0.88, 0.85 * fade)
 	for i in range(12):
 		var ang := float(i) / 12.0 * TAU + 0.5

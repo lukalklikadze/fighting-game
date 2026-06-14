@@ -10,9 +10,12 @@ class_name YantsiProjectile
 ## Visuals are drawn placeholders — replace _draw() with a spinning sprite when
 ## the art is ready; the flight / hit logic stays untouched.
 
-const FLIGHT_TIME := 1.7              # seconds for the full out-and-back trip
-const MAX_RANGE := 520.0              # peak distance from the thrower
-const ARC_HEIGHT := 26.0             # slight vertical bow at mid-flight
+const OUTWARD_TIME := 0.85            # seconds to sweep out to peak range
+const RETURN_SPEED := 1050.0         # px/s homing back to the thrower
+const CATCH_RADIUS := 46.0           # "caught" (picked up) when this close to the hand
+const MAX_LIFETIME := 6.0            # safety so it can never live forever
+const MAX_RANGE := 780.0             # peak distance from the thrower (flies farther now)
+const ARC_HEIGHT := 30.0             # slight vertical bow on the way out
 const SPIN_SPEED := 17.0             # radians / second
 const HIT_RADIUS := 38.0
 const REHIT_COOLDOWN := 0.6          # gap so out + back are two separate hits
@@ -24,6 +27,7 @@ var _dir := 1
 var _origin := Vector2.ZERO
 var _age := 0.0
 var _hit_cd := 0.0
+var _returning := false              # false = flying out, true = homing back to the thrower
 
 
 func setup(user, authoritative: bool, origin: Vector2, dir: int) -> void:
@@ -40,19 +44,38 @@ func _physics_process(delta: float) -> void:
 	_age += delta
 	_hit_cd = maxf(_hit_cd - delta, 0.0)
 
-	var phase: float = clampf(_age / FLIGHT_TIME, 0.0, 1.0)
-	var sweep: float = sin(phase * PI)                 # 0 -> 1 -> 0 (out and back)
-	global_position = Vector2(
-		_origin.x + float(_dir) * sweep * MAX_RANGE,
-		_origin.y - sweep * ARC_HEIGHT)
+	if not _returning:
+		# Sweep outward to peak range, bowing up slightly, then start coming back.
+		var phase: float = clampf(_age / OUTWARD_TIME, 0.0, 1.0)
+		global_position = Vector2(
+			_origin.x + float(_dir) * phase * MAX_RANGE,
+			_origin.y - sin(phase * PI) * ARC_HEIGHT)
+		if phase >= 1.0:
+			_returning = true
+	else:
+		# Home back to the thrower's CURRENT hand (so it returns to the fighter even
+		# if they moved) and vanish only once it reaches them — they "catch" it.
+		var target := _catch_point()
+		global_position = global_position.move_toward(target, RETURN_SPEED * delta)
+		if global_position.distance_to(target) <= CATCH_RADIUS:
+			queue_free()
+			return
+
 	rotation += SPIN_SPEED * delta * float(_dir)
 
 	if _authoritative and _hit_cd <= 0.0:
 		_check_hit()
 
 	queue_redraw()
-	if _age >= FLIGHT_TIME:
+	if _age >= MAX_LIFETIME:
 		queue_free()
+
+
+# Where the horn returns to: the thrower's live hand position (fallback: origin).
+func _catch_point() -> Vector2:
+	if _user != null and is_instance_valid(_user) and _user.has_method("special_hand_position"):
+		return _user.call("special_hand_position")
+	return _origin
 
 
 func _check_hit() -> void:
