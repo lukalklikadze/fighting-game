@@ -6,7 +6,7 @@ extends Node2D
 ##
 ## Controls (in the fight):
 ##   A / D move · W jump · S crouch · J/K/L light/medium/heavy · I guard
-##   SPECIAL  = triple-tap L
+##   SPECIAL  = double-tap O
 ##   1 / 2 / 3  switch YOUR fighter      B  cycle the BOT's fighter
 ##   C  instantly recharge your special  R  restart the round
 ##   TAB  back to the fighter-select screen
@@ -247,7 +247,7 @@ func _build_select_screen(layer: CanvasLayer) -> void:
 		line.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		column.add_child(line)
 
-	var hint := _make_label("Press 1 / 2 / 3 to start.   Special move = triple-tap L.", 20)
+	var hint := _make_label("Press 1 / 2 / 3 to start.   Special move = double-tap O.", 20)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.add_theme_color_override("font_color", Color(0.30, 0.30, 0.30, 1.0))
 	column.add_child(hint)
@@ -310,7 +310,7 @@ func _set_special(label: Label, bar: ProgressBar, player: Node2D, is_human: bool
 	bar.value = clampf((total - remaining) / total * 100.0, 0.0, 100.0)
 	var fill := bar.get_theme_stylebox("fill") as StyleBoxFlat
 	if remaining <= 0.0:
-		var hint := "   (triple-tap L)" if is_human else ""
+		var hint := "   (double-tap O)" if is_human else ""
 		label.text = "%s — READY%s" % [sp_name, hint]
 		label.add_theme_color_override("font_color", Color(0.10, 0.55, 0.18, 1.0))
 		if fill != null:

@@ -17,7 +17,7 @@ signal super_full(player_id: int)
 ## Which sprite set / character this fighter uses. "placeholder" keeps the old
 ## stick-figure fighter with the full moveset; the hand-drawn people
 ## ("english"/"georgian"/"scotish") have walk + jump + hand kick + leg kick +
-## hard hit (heavy), with triple-tap-L for the super. They still have no
+## hard hit (heavy), with double-tap-O for the special. They still have no
 ## crouch/dash/slide (no art); blocking is allowed (hold I, blue tint).
 @export var character_key := "placeholder"
 @export var bot_preferred_range := 145.0
@@ -99,12 +99,11 @@ const SUPER_METER_PER_DMG_TAKEN := 1.4    # meter per point of damage taken
 
 # ── Special move ──────────────────────────────────────────────────────────────
 # Every fighter has one signature special (see characters/scripts/specials/).
-# It is triggered by a quick TRIPLE-TAP of one attack button (default heavy / L).
-# A repeated tap is used instead of a two-key chord because two keys pressed at
-# the exact same instant can fail to register on many keyboards (rollover/
-# ghosting), whereas tapping the same key is always reliable. Re-bind below.
-const SPECIAL_TAP_KEY := "heavy"            # which attack button taps (light/medium/heavy)
-const SPECIAL_TAP_COUNT := 3                # number of quick taps that fire the special
+# It is triggered by a quick DOUBLE-TAP of the dedicated special key O ("OO").
+# A dedicated key (separate from the attack buttons) keeps the input clean and
+# reliable on any keyboard. Re-bind below.
+const SPECIAL_KEY := KEY_O                  # dedicated special button
+const SPECIAL_TAP_COUNT := 2                # taps of SPECIAL_KEY that fire the special ("OO")
 const SPECIAL_TAP_INTERVAL := 0.30          # max seconds between consecutive taps
 const SPECIAL_CANCEL_FRAMES := 72           # the special can interrupt a normal attack in progress
 
@@ -168,7 +167,7 @@ var _special_cooldown := 0.0
 var _special_fired := false
 var _special_requested := false
 var _special_tap_count := 0
-var _last_attack_press := {"light": -10.0, "medium": -10.0, "heavy": -10.0}
+var _last_special_tap := -10.0
 
 var _move_dir := 0
 var _down_held := false
@@ -1365,7 +1364,7 @@ func reset_fighter(start_position: Vector2, reset_health := true) -> void:
 	_special_fired = false
 	_special_requested = false
 	_special_tap_count = 0
-	_last_attack_press = {"light": -10.0, "medium": -10.0, "heavy": -10.0}
+	_last_special_tap = -10.0
 	_resolve_special_ability()
 	if reset_health:
 		health = max_health
@@ -1645,7 +1644,7 @@ func _read_local_inputs() -> void:
 	if Input.is_physical_key_pressed(KEY_D):
 		_move_dir += 1
 	# People (english/georgian/scotish) walk + jump (W) + hand kick (J) +
-	# leg kick (K) + hard hit / heavy (L), and triple-tap L fires the super.
+	# leg kick (K) + hard hit / heavy (L), and double-tap O fires the special.
 	# They still have no crouch/dash/slide (no art); blocking IS allowed (hold I).
 	var simple := _is_simple()
 	_down_held = Input.is_physical_key_pressed(KEY_S) and not simple
@@ -1667,28 +1666,18 @@ func _read_local_inputs() -> void:
 	if heavy_pressed:
 		_record_combo_input("heavy")
 
-	# Special move: SPECIAL_TAP_COUNT quick taps of the SPECIAL_TAP_KEY attack
-	# button. The last tap converts the normal attack in progress into the special.
+	# Special move: a quick double-tap of the dedicated special key ("OO").
 	var now := Time.get_ticks_msec() / 1000.0
-	var tap_pressed := false
-	match SPECIAL_TAP_KEY:
-		"light":
-			tap_pressed = light_pressed
-		"medium":
-			tap_pressed = medium_pressed
-		_:
-			tap_pressed = heavy_pressed
-	if tap_pressed:
-		var prev_tap: float = float(_last_attack_press[SPECIAL_TAP_KEY])
-		if prev_tap > 0.0 and (now - prev_tap) <= SPECIAL_TAP_INTERVAL:
+	if _consume_just_pressed(SPECIAL_KEY):
+		if _last_special_tap > 0.0 and (now - _last_special_tap) <= SPECIAL_TAP_INTERVAL:
 			_special_tap_count += 1
 		else:
 			_special_tap_count = 1
-		_last_attack_press[SPECIAL_TAP_KEY] = now
+		_last_special_tap = now
 		if is_special_ready() and _special_tap_count >= SPECIAL_TAP_COUNT:
 			_special_requested = true
 			_special_tap_count = 0
-			_last_attack_press[SPECIAL_TAP_KEY] = -10.0
+			_last_special_tap = -10.0
 
 	# Hand-drawn fighters use real chained animations (J->K->L) instead of the
 	# placeholder full_combo, so skip the auto-combo for them.
@@ -1848,7 +1837,7 @@ func _poll_key_edges() -> void:
 	if not _has_local_input():
 		_key_down.clear()
 		return
-	for key_code in [KEY_A, KEY_D, KEY_W, KEY_S, KEY_J, KEY_K, KEY_L, GUARD_KEY]:
+	for key_code in [KEY_A, KEY_D, KEY_W, KEY_S, KEY_J, KEY_K, KEY_L, KEY_O, GUARD_KEY]:
 		var pressed := Input.is_physical_key_pressed(key_code)
 		var was_pressed := bool(_key_down.get(key_code, false))
 		_just_pressed[key_code] = pressed and not was_pressed

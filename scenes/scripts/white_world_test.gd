@@ -18,12 +18,26 @@ const BIG_SUPER_FRACTION := 0.30     # starter won the minigame
 const SMALL_SUPER_FRACTION := 0.15   # starter lost the minigame
 const KO_FREEZE_TIME := 1.4
 const SUPER_FADE := 0.35
+
+# --- Pause menu (each player may pause once per match; never during a minigame) ---
+# A centred, hand-drawn card (assets/pause menu) with two READY buttons that
+# light up per state. Local perspective: the LEFT button is always YOU, the
+# right is the opponent. Pause with ESC, ready with ENTER.
+const PAUSE_DURATION := 20.0
+const PAUSE_KEY := KEY_ESCAPE
+const PAUSE_READY_KEY := KEY_ENTER
+const PAUSE_MENU_HEIGHT := 580.0     # on-screen height of the centred card (kept off the edges)
+const PAUSE_IMG_NONE := preload("res://assets/pause menu/pausNotReady.png")
+const PAUSE_IMG_P1 := preload("res://assets/pause menu/pausePlayer1Ready.png")
+const PAUSE_IMG_P2 := preload("res://assets/pause menu/pauseOpponentReady.png")
+const PAUSE_IMG_BOTH := preload("res://assets/pause menu/pauseBothReady.png")
+
 const MINIGAME_PATHS := {
 	1: "res://minigames/typeracer/scenes/Typeracer.tscn",
 	2: "res://minigames/beer/scenes/Beer.tscn",
 	3: "res://minigames/juggling/scenes/Juggling.tscn",
 }
-enum MatchSub { FIGHT, SUPER, KO }
+enum MatchSub { FIGHT, SUPER, KO, PAUSE }
 
 # Fighting-game camera: follow the midpoint, zoom out as the fighters separate,
 # and clamp to the stage so it never scrolls past the walls (as in Sakuga-Engine
@@ -97,6 +111,19 @@ var _victory_label: Label
 var _msub := MatchSub.FIGHT
 var _bar := {1: 1, 2: 1}
 var _super_connected := false
+
+# Pause state (host-authoritative, mirrored on both peers).
+var _pause_active := false
+var _pause_is_intro := false      # true while showing the pre-fight instructions
+var _pauser_pid := 0
+var _pause_time_left := 0.0
+var _pause_down := false
+var _pause_ready_down := false
+var _pause_used := {1: false, 2: false}
+var _pause_ready := {1: false, 2: false}
+var _pause_root: Control
+var _pause_image: TextureRect
+var _pause_timer_label: Label
 var _minigame: Node = null
 var _mg_layer: CanvasLayer
 var _fade_rect: ColorRect
@@ -169,9 +196,13 @@ func _process(delta: float) -> void:
 			_update_camera()
 			_refresh_special_hud()
 			_refresh_lives_super_hud()
-			if _msub == MatchSub.FIGHT:
-				_process_match_end()
-			_handle_debug_reset()
+			if _pause_active:
+				_process_pause(delta)
+			else:
+				if _msub == MatchSub.FIGHT:
+					_process_match_end()
+				_handle_debug_reset()
+				_handle_pause_input()
 
 
 func _build_interface() -> void:
@@ -201,6 +232,13 @@ func _build_interface() -> void:
 	_fade_rect.visible = false
 	_fade_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	fade_layer.add_child(_fade_rect)
+
+	# Pause overlay sits above the fight/fade, below the always-on QUIT button.
+	var pause_layer := CanvasLayer.new()
+	pause_layer.name = "PauseLayer"
+	pause_layer.layer = 80
+	add_child(pause_layer)
+	_build_pause_menu(pause_layer)
 
 	_build_title_screen(_ui_layer)
 	_build_select_screen(_ui_layer)
@@ -316,6 +354,42 @@ func _build_victory_banner(layer: CanvasLayer) -> void:
 	_victory_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_victory_label.visible = false
 	center.add_child(_victory_label)
+
+
+func _build_pause_menu(layer: CanvasLayer) -> void:
+	_pause_root = Control.new()
+	_pause_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_pause_root.visible = false
+	layer.add_child(_pause_root)
+
+	# Light dim so the frozen fight stays visible behind the centred card.
+	var dim := ColorRect.new()
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0.0, 0.0, 0.0, 0.32)
+	_pause_root.add_child(dim)
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_pause_root.add_child(center)
+
+	var col := VBoxContainer.new()
+	col.alignment = BoxContainer.ALIGNMENT_CENTER
+	col.add_theme_constant_override("separation", 8)
+	center.add_child(col)
+
+	# Countdown above the card (the card art has no timer slot of its own).
+	_pause_timer_label = _make_menu_label("", 34, Color(1.0, 0.95, 0.5, 1.0))
+	_pause_timer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(_pause_timer_label)
+
+	# The hand-drawn menu card, scaled to a fixed height (keeps its aspect ratio).
+	_pause_image = TextureRect.new()
+	_pause_image.texture = PAUSE_IMG_NONE
+	_pause_image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_pause_image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	var card_w := PAUSE_MENU_HEIGHT * 1000.0 / 1294.0
+	_pause_image.custom_minimum_size = Vector2(card_w, PAUSE_MENU_HEIGHT)
+	col.add_child(_pause_image)
 
 
 func _build_title_screen(layer: CanvasLayer) -> void:
@@ -697,6 +771,7 @@ func _connect_multiplayer_signals() -> void:
 func _show_title_screen() -> void:
 	_screen = ScreenState.TITLE
 	_title_timer = TITLE_DURATION
+	_clear_pause_state()
 	_title_root.visible = true
 	_select_root.visible = false
 	_fight_layer.visible = false
@@ -706,6 +781,7 @@ func _show_title_screen() -> void:
 func _show_select_screen(message := "") -> void:
 	_screen = ScreenState.SELECT
 	_msub = MatchSub.FIGHT
+	_clear_pause_state()
 	_clear_minigame()
 	if _fade_rect != null:
 		_fade_rect.color.a = 0.0
@@ -1034,6 +1110,8 @@ func _start_match(client_peer_id: int, p1_character: int, p2_character: int) -> 
 	_match_end_sent = false
 	# Start the lives + super-meter loop.
 	_bar = {1: 1, 2: 1}
+	_pause_used = {1: false, 2: false}
+	_clear_pause_state()
 	_msub = MatchSub.FIGHT
 	player_one.set("super_fill_enabled", true)
 	player_two.set("super_fill_enabled", true)
@@ -1044,6 +1122,9 @@ func _start_match(client_peer_id: int, p1_character: int, p2_character: int) -> 
 		_fight_started = true
 		MatchSetup.clear()
 	_show_match_screen()
+	# Pre-fight instructions: same card + ready logic, shown on both peers. The
+	# fight is frozen until both ready or the 20s runs out. Doesn't use a pause.
+	_begin_intro()
 
 
 func _connect_super_signals() -> void:
@@ -1141,6 +1222,7 @@ func _return_to_selection_after_match(message: String) -> void:
 	_selected_by_player[2] = -1
 	_match_end_sent = false
 	# Tear down the lives/super loop.
+	_clear_pause_state()
 	_msub = MatchSub.FIGHT
 	_bar = {1: 1, 2: 1}
 	_clear_minigame()
@@ -1329,6 +1411,210 @@ func _super_fade(to_alpha: float) -> void:
 	await tw.finished
 	if to_alpha <= 0.0:
 		_fade_rect.visible = false
+
+
+# ===========================================================================
+#  Pause menu (host-authoritative; one pause per player per match)
+# ===========================================================================
+
+func _handle_pause_input() -> void:
+	# Edge-detected pause key. Only from a live fight (never a minigame / KO).
+	var pressed := Input.is_physical_key_pressed(PAUSE_KEY)
+	if pressed and not _pause_down and _msub == MatchSub.FIGHT and not _pause_active:
+		_request_pause()
+	_pause_down = pressed
+
+
+func _request_pause() -> void:
+	var pid := _local_player_id()
+	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
+		_rpc_request_pause.rpc_id(1, pid)
+	else:
+		_host_begin_pause(pid)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_request_pause(pid: int) -> void:
+	if not multiplayer.is_server():
+		return
+	# The only remote peer is the client = Player 2; trust nothing else.
+	var who := 2 if multiplayer.get_remote_sender_id() == _client_peer_id else pid
+	_host_begin_pause(who)
+
+
+func _host_begin_pause(pid: int) -> void:
+	if _screen != ScreenState.MATCH or _msub != MatchSub.FIGHT or _pause_active:
+		return
+	if bool(_pause_used.get(pid, true)):
+		return   # this player already spent their one pause
+	_pause_used[pid] = true
+	if multiplayer.has_multiplayer_peer():
+		_rpc_begin_pause.rpc(pid)
+	_begin_pause(pid)
+
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_begin_pause(pid: int) -> void:
+	_pause_used[pid] = true
+	_begin_pause(pid)
+
+
+# Shared by the ESC pause and the pre-fight instructions intro (same card, same
+# ready/timeout logic). The intro just doesn't consume a player's one pause.
+func _enter_pause_overlay(pauser_pid: int, is_intro: bool) -> void:
+	_pause_active = true
+	_pause_is_intro = is_intro
+	_pauser_pid = pauser_pid
+	_pause_time_left = PAUSE_DURATION
+	_pause_ready = {1: false, 2: false}
+	# Require a fresh ENTER press (don't auto-ready if it's already held).
+	_pause_ready_down = Input.is_physical_key_pressed(PAUSE_READY_KEY)
+	_msub = MatchSub.PAUSE
+	_set_match_frozen(true)
+	# Fully halt the fighters so no in-progress attack/animation resolves.
+	player_one.set_physics_process(false)
+	player_two.set_physics_process(false)
+	if _pause_root != null:
+		_pause_root.visible = true
+	_update_pause_ui()
+
+
+func _begin_pause(pauser_pid: int) -> void:
+	_enter_pause_overlay(pauser_pid, false)
+
+
+# Pre-fight instructions: shown automatically at match start on both peers. Both
+# call this from _start_match, so no begin RPC is needed; the host ends it (20s
+# or both ready) via the same path as a pause.
+func _begin_intro() -> void:
+	_enter_pause_overlay(0, true)
+
+
+func _process_pause(delta: float) -> void:
+	_pause_time_left = maxf(_pause_time_left - delta, 0.0)
+	# Local player readies with ENTER (edge-detected).
+	var ready_pressed := Input.is_physical_key_pressed(PAUSE_READY_KEY)
+	if ready_pressed and not _pause_ready_down:
+		_ready_up_local()
+	_pause_ready_down = ready_pressed
+	_update_pause_ui()
+	_maybe_host_end_pause()
+
+
+func _ready_up_local() -> void:
+	if not _pause_active:
+		return
+	var pid := _local_player_id()
+	if bool(_pause_ready.get(pid, false)):
+		return
+	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
+		_set_pause_ready(pid, true)         # optimistic local feedback
+		_rpc_pause_ready.rpc_id(1, pid)
+	else:
+		_host_set_ready(pid)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_pause_ready(pid: int) -> void:
+	if not multiplayer.is_server():
+		return
+	var who := 2 if multiplayer.get_remote_sender_id() == _client_peer_id else pid
+	_host_set_ready(who)
+
+
+func _host_set_ready(pid: int) -> void:
+	if not _pause_active:
+		return
+	_set_pause_ready(pid, true)
+	if multiplayer.has_multiplayer_peer():
+		_rpc_pause_ready_state.rpc(bool(_pause_ready[1]), bool(_pause_ready[2]))
+	_maybe_host_end_pause()
+
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_pause_ready_state(r1: bool, r2: bool) -> void:
+	_pause_ready[1] = r1
+	_pause_ready[2] = r2
+	_update_pause_ui()
+
+
+func _set_pause_ready(pid: int, ready: bool) -> void:
+	_pause_ready[pid] = ready
+	_update_pause_ui()
+
+
+func _is_pause_host() -> bool:
+	return not multiplayer.has_multiplayer_peer() or multiplayer.is_server()
+
+
+func _maybe_host_end_pause() -> void:
+	if not _is_pause_host() or not _pause_active:
+		return
+	var both_ready := bool(_pause_ready[1]) and bool(_pause_ready[2])
+	if not multiplayer.has_multiplayer_peer():
+		both_ready = bool(_pause_ready[_local_player_id()])
+	if both_ready or _pause_time_left <= 0.0:
+		if multiplayer.has_multiplayer_peer():
+			_rpc_end_pause.rpc()
+		_end_pause()
+
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_end_pause() -> void:
+	_end_pause()
+
+
+func _end_pause() -> void:
+	if not _pause_active:
+		return
+	_pause_active = false
+	_pause_is_intro = false
+	_pause_ready = {1: false, 2: false}
+	if _pause_root != null:
+		_pause_root.visible = false
+	if _msub == MatchSub.PAUSE:
+		_msub = MatchSub.FIGHT
+	player_one.set_physics_process(true)
+	player_two.set_physics_process(true)
+	_set_match_frozen(false)
+
+
+func _clear_pause_state() -> void:
+	# Force pause off (used when a match starts/ends or a peer drops mid-pause).
+	_pause_active = false
+	_pause_is_intro = false
+	_pause_time_left = 0.0
+	_pause_ready = {1: false, 2: false}
+	if _pause_root != null:
+		_pause_root.visible = false
+	if _msub == MatchSub.PAUSE:
+		_msub = MatchSub.FIGHT
+
+
+func _update_pause_ui() -> void:
+	if not _pause_active or _pause_image == null:
+		return
+	_pause_image.texture = _pause_texture_for_state()
+	if _pause_is_intro:
+		_pause_timer_label.text = "FIGHT STARTS IN   %ds" % int(ceil(_pause_time_left))
+	else:
+		_pause_timer_label.text = "PAUSED   %ds" % int(ceil(_pause_time_left))
+
+
+func _pause_texture_for_state() -> Texture2D:
+	# Local perspective: the LEFT button is always YOU, the right is the opponent.
+	# So the same ready state shows mirrored on the two machines (you ready ->
+	# you see the left light up, the opponent sees the right light up).
+	var me := _local_player_id()
+	var me_ready := bool(_pause_ready[me])
+	var opp_ready := bool(_pause_ready[_other_player(me)])
+	if me_ready and opp_ready:
+		return PAUSE_IMG_BOTH
+	if me_ready:
+		return PAUSE_IMG_P1     # left red = you
+	if opp_ready:
+		return PAUSE_IMG_P2     # right red = opponent
+	return PAUSE_IMG_NONE
 
 
 @rpc("authority", "call_remote", "reliable")
