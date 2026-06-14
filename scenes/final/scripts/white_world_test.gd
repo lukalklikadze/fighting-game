@@ -172,6 +172,7 @@ var _rng := RandomNumberGenerator.new()
 
 # Fight-mode: launched directly from the starter_2 select scene (skip title/select).
 var _fight_mode := false
+var _solo_preview := false            # offline preview vs a bot (FightPreview.tscn)
 var _fight_started := false
 var _fight_ready_timer := 0.0
 
@@ -1070,6 +1071,16 @@ func _enter_fight_mode() -> void:
 	_fight_mode = true
 	_fight_started = false
 	_hide_title_and_select()
+	if not multiplayer.has_multiplayer_peer():
+		# Solo preview (no network): there is no remote client to hand-shake with,
+		# so start the match immediately with a bot opponent. Used by FightPreview.tscn.
+		# In the real game a multiplayer peer always exists here, so this never runs.
+		_solo_preview = true
+		_hosting_active = true
+		_connected_as_client = false
+		_client_peer_id = 0
+		call_deferred("_begin_fight_from_setup")
+		return
 	if multiplayer.is_server():
 		_hosting_active = true
 		_connected_as_client = false
@@ -1111,7 +1122,8 @@ func _begin_fight_from_setup() -> void:
 	var resolved := _resolve_match_characters()
 	var p1_character := int(resolved[0])
 	var p2_character := int(resolved[1])
-	_rpc_start_match.rpc(_client_peer_id, p1_character, p2_character)
+	if multiplayer.has_multiplayer_peer():
+		_rpc_start_match.rpc(_client_peer_id, p1_character, p2_character)
 	_start_match(_client_peer_id, p1_character, p2_character)
 
 
@@ -1163,6 +1175,9 @@ func _start_match(client_peer_id: int, p1_character: int, p2_character: int) -> 
 	player_one.call("reset_super")
 	player_two.call("reset_super")
 	_connect_super_signals()
+	if _solo_preview:
+		# Solo preview: Player 1 is keyboard-controlled, Player 2 is a bot.
+		player_two.set("bot_enabled", true)
 	if _fight_mode:
 		_fight_started = true
 		MatchSetup.clear()
