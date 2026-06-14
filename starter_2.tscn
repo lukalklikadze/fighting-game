@@ -7,6 +7,8 @@
 [ext_resource type="Texture2D" uid="uid://bylimy88v3qcn" path="res://assets/start sprites/random_ball.png" id="5_bewve"]
 [ext_resource type="Script" uid="uid://88vdsw711uvd" path="res://scenes/scripts/starter_2.gd" id="6_script"]
 [ext_resource type="Texture2D" uid="uid://dny5kieyart8x" path="res://assets/start sprites/Group 3.png" id="7_display"]
+[ext_resource type="Texture2D" uid="uid://bch4o80ag6kj8" path="res://assets/start.png" id="8_ye161"]
+[ext_resource type="Texture2D" uid="uid://c7ywpla5063d" path="res://assets/join.png" id="9_2kjkn"]
 
 [node name="Node2D" type="Node2D" unique_id=26301389]
 script = ExtResource("6_script")
@@ -45,3 +47,13 @@ texture = ExtResource("7_display")
 position = Vector2(978.00006, 480)
 scale = Vector2(0.4733834, 0.45555013)
 texture = ExtResource("7_display")
+
+[node name="start" type="Sprite2D" parent="." unique_id=707384504]
+position = Vector2(396.00003, 612)
+scale = Vector2(0.69014084, 0.69014084)
+texture = ExtResource("8_ye161")
+
+[node name="join" type="Sprite2D" parent="." unique_id=743644176]
+position = Vector2(837.102, 608.375)
+scale = Vector2(0.68026876, 0.6610583)
+texture = ExtResource("9_2kjkn")

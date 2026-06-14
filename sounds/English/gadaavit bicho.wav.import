@@ -1,0 +1,24 @@
+[remap]
+
+importer="wav"
+type="AudioStreamWAV"
+uid="uid://djj8dcsyod2hj"
+path="res://.godot/imported/gadaavit bicho.wav-51b19d0d5614c47d475dc47486a57482.sample"
+
+[deps]
+
+source_file="res://sounds/English/gadaavit bicho.wav"
+dest_files=["res://.godot/imported/gadaavit bicho.wav-51b19d0d5614c47d475dc47486a57482.sample"]
+
+[params]
+
+force/8_bit=false
+force/mono=false
+force/max_rate=false
+force/max_rate_hz=44100
+edit/trim=false
+edit/normalize=false
+edit/loop_mode=0
+edit/loop_begin=0
+edit/loop_end=-1
+compress/mode=2

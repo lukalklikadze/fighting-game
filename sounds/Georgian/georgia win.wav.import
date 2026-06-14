@@ -1,0 +1,24 @@
+[remap]
+
+importer="wav"
+type="AudioStreamWAV"
+uid="uid://bigv8ksiyeegp"
+path="res://.godot/imported/georgia win.wav-acf06f5a066fac1a756efbaddd0eba7e.sample"
+
+[deps]
+
+source_file="res://sounds/Georgian/georgia win.wav"
+dest_files=["res://.godot/imported/georgia win.wav-acf06f5a066fac1a756efbaddd0eba7e.sample"]
+
+[params]
+
+force/8_bit=false
+force/mono=false
+force/max_rate=false
+force/max_rate_hz=44100
+edit/trim=false
+edit/normalize=false
+edit/loop_mode=0
+edit/loop_begin=0
+edit/loop_end=-1
+compress/mode=2

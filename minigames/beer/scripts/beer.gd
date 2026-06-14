@@ -21,6 +21,22 @@ const COL_LOSE := "#ff5555"
 const COL_DRAW := "#ffd166"
 const COL_HEADER_OPP := "#c2cad6"
 
+# Instruction card shown (over the frozen game) for a few seconds before each round.
+const INSTRUCTION_TEX: Texture2D = preload("res://assets/mini_game_instruction_3.png")
+const INSTRUCTION_W := 500.0
+const INSTRUCTION_TIME := 3.0
+
+# --- Character names (resolved from MatchSetup: which fighter each side picked) ---
+var local_char := ""     # character id of the local player
+var opp_char := ""       # character id of the opponent
+
+const CHAR_NAMES := {
+	"georgian": "ჯოტია ცაავა",
+	"english":  "ლოთი ინგლისელი",
+	"scotish":  "კაბიანი შოტლანდიელი",
+	"scottish": "კაბიანი შოტლანდიელი",
+}
+
 # --- Game state -------------------------------------------------------------
 var fill := 0.0          # local cup fill (1.0 == brim)
 var velocity := 0.0      # current pour speed (eases up while held, down on release)
@@ -62,9 +78,15 @@ var opp_pct: Label
 var result_label: Label
 var you_result: Label
 var opp_result: Label
+var _instruction: TextureRect   # instruction card shown before the round
 
 const Cup := preload("res://minigames/beer/scripts/cup.gd")
-const BarBackground := preload("res://minigames/beer/scripts/bar_background.gd")
+
+const POUR_SFX: AudioStream = preload("res://sounds/SFX/beer pour.wav")
+var _pour_sfx: AudioStreamPlayer
+
+# Georgian-capable font for the headers (the handwriting font lacks Georgian glyphs).
+const GEORGIAN_FONT: FontFile = preload("res://assets/fonts/NotoSansGeorgian-Black.ttf")
 
 
 func _ready() -> void:
@@ -84,8 +106,9 @@ func _ready() -> void:
 	hand_theme.default_font = hand_font
 	theme = hand_theme
 
-	# Pub background behind everything.
-	add_child(BarBackground.new())
+	_pour_sfx = AudioStreamPlayer.new()
+	_pour_sfx.stream = POUR_SFX
+	add_child(_pour_sfx)
 
 	_build_game_ui()
 	result_label.visible = false
@@ -181,12 +204,17 @@ func _begin_match() -> void:
 	_render_you()
 	_render_opponent()
 
+	# Instruction card over the frozen game for a few seconds, then the countdown.
+	_instruction.visible = true
+	await get_tree().create_timer(INSTRUCTION_TIME).timeout
+	_instruction.visible = false
+
 	for n in [3, 2, 1]:
 		result_label.text = str(n)
 		result_label.add_theme_color_override("font_color", Color("#ffffff"))
 		result_label.visible = true
 		await get_tree().create_timer(1.0).timeout
-	result_label.text = "POUR!"
+	result_label.text = "GO!"
 	result_label.add_theme_color_override("font_color", Color(COL_WIN))
 	await get_tree().create_timer(0.5).timeout
 	result_label.visible = false
@@ -218,6 +246,12 @@ func _process(delta: float) -> void:
 			velocity = move_toward(velocity, 0.0, POUR_DECEL * delta)
 
 		fill += velocity * delta
+		# Pour sound plays while beer is actually flowing (loops by replaying).
+		if velocity > 0.001:
+			if not _pour_sfx.playing:
+				_pour_sfx.play()
+		elif _pour_sfx.playing:
+			_pour_sfx.stop()
 		if fill >= SPILL_LIMIT:
 			fill = SPILL_LIMIT
 			_lock()
@@ -254,6 +288,8 @@ func _lock() -> void:
 	if stopped:
 		return
 	stopped = true
+	if _pour_sfx.playing:
+		_pour_sfx.stop()
 	_render_you()
 	if not solo:
 		update_fill.rpc(fill, true)
@@ -280,11 +316,11 @@ func report_stopped(f: float) -> void:
 	_finals[sender] = f
 	if _finals.size() >= 2:
 		var ids := _finals.keys()
-		var sa := _score(_finals[ids[0]])
-		var sb := _score(_finals[ids[1]])
+		var ra := _rank(_finals[ids[0]])
+		var rb := _rank(_finals[ids[1]])
 		var winner := 0 # 0 == draw
-		if abs(sa - sb) >= 0.0005:
-			winner = ids[0] if sa < sb else ids[1]
+		if ra != rb:
+			winner = ids[0] if ra > rb else ids[1]
 		set_result.rpc(winner)
 
 
@@ -305,20 +341,21 @@ func _resolve_solo() -> void:
 #  Scoring / results
 # ===========================================================================
 
-# Distance from a perfect pour (lower is better). Any spill (>1.0) ranks below
-# every clean pour; among spills, the smaller overflow is better.
-func _score(f: float) -> float:
-	if f <= 1.0 + FOAM_ZONE:
-		return abs(1.0 - f)            # 0 = perfect brim; foam zone scores slightly worse but not a spill
-	return 1.0 + FOAM_ZONE + (f - 1.0 - FOAM_ZONE)  # real spill — heavily penalised
+# Rank a pour the way the player sees it: the displayed percentage (higher is
+# better). Any spill ranks below every clean pour. Equal rank → draw, so two
+# pours that show the same percentage always tie.
+func _rank(f: float) -> int:
+	if f > 1.0 + FOAM_ZONE:
+		return -1                          # spilled — loses to any clean pour
+	return roundi(minf(f, 1.0) * 100.0)    # the shown percentage
 
 
 func _outcome(mine: float, other: float) -> String:
-	var sm := _score(mine)
-	var so := _score(other)
-	if abs(sm - so) < 0.0005:
+	var rm := _rank(mine)
+	var ro := _rank(other)
+	if rm == ro:
 		return "DRAW"
-	return "WINNER" if sm < so else "LOSER"
+	return "WINNER" if rm > ro else "LOSER"
 
 
 func _show_outcome(you_text: String, opp_text: String) -> void:
@@ -365,7 +402,7 @@ func _render_opponent() -> void:
 
 func _fill_text(f: float) -> String:
 	if f > 1.0 + FOAM_ZONE:
-		return "SPILLED!"
+		return "დაგეწუწა, დებილო!"
 	return "%d%%" % roundi(minf(f, 1.0) * 100.0)
 
 
@@ -373,7 +410,19 @@ func _fill_text(f: float) -> String:
 #  UI construction
 # ===========================================================================
 
+# Work out which fighter is on each side (host = Player 1 = p1_choice).
+func _resolve_chars() -> void:
+	var is_host := not multiplayer.has_multiplayer_peer() or multiplayer.is_server()
+	local_char = String(MatchSetup.p1_choice if is_host else MatchSetup.p2_choice)
+	opp_char = String(MatchSetup.p2_choice if is_host else MatchSetup.p1_choice)
+
+
+func _char_name(id: String) -> String:
+	return CHAR_NAMES.get(id, id)
+
+
 func _build_game_ui() -> void:
+	_resolve_chars()
 	game_ui = Control.new()
 	game_ui.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	game_ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -384,19 +433,19 @@ func _build_game_ui() -> void:
 	split.add_theme_constant_override("separation", 0)
 	game_ui.add_child(split)
 
-	var you_panel := _make_panel("YOU", true)
+	var you_panel := _make_panel(_char_name(local_char), true)
 	split.add_child(you_panel[0])
 	you_cup = you_panel[1]
 	you_pct = you_panel[2]
 	you_result = you_panel[3]
 
-	var opp_panel := _make_panel("OPPONENT", false)
+	var opp_panel := _make_panel(_char_name(opp_char), false)
 	split.add_child(opp_panel[0])
 	opp_cup = opp_panel[1]
 	opp_pct = opp_panel[2]
 	opp_result = opp_panel[3]
 
-	# Countdown overlay (3-2-1-POUR), centered across the whole screen.
+	# Countdown overlay (3-2-1-GO), centered across the whole screen.
 	result_label = Label.new()
 	result_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	result_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -404,6 +453,23 @@ func _build_game_ui() -> void:
 	result_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	result_label.add_theme_font_size_override("font_size", 96)
 	game_ui.add_child(result_label)
+
+	_instruction = _make_instruction(INSTRUCTION_TEX)
+	game_ui.add_child(_instruction)
+
+
+func _make_instruction(tex: Texture2D) -> TextureRect:
+	var card := TextureRect.new()
+	card.texture = tex
+	card.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	card.stretch_mode = TextureRect.STRETCH_SCALE
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var w := INSTRUCTION_W
+	var h := w * float(tex.get_height()) / float(tex.get_width())
+	card.position = Vector2((1280.0 - w) * 0.5, (720.0 - h) * 0.5)
+	card.size = Vector2(w, h)
+	card.visible = false
+	return card
 
 
 # Returns [panel_root, cup, percent_label, result_label].
@@ -429,8 +495,9 @@ func _make_panel(header: String, is_you: bool) -> Array:
 	var head := Label.new()
 	head.text = header
 	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	head.add_theme_font_override("font", GEORGIAN_FONT)
 	head.add_theme_font_size_override("font_size", 28)
-	head.add_theme_color_override("font_color", Color(COL_WIN) if is_you else Color(COL_HEADER_OPP))
+	head.add_theme_color_override("font_color", Color.WHITE)
 	head.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.7))
 	head.add_theme_constant_override("outline_size", 5)
 	col.add_child(head)
@@ -442,19 +509,12 @@ func _make_panel(header: String, is_you: bool) -> Array:
 
 	var pct := Label.new()
 	pct.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pct.add_theme_font_override("font", GEORGIAN_FONT)
 	pct.add_theme_font_size_override("font_size", 30)
 	pct.add_theme_color_override("font_color", Color("#ffffff"))
 	pct.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.7))
 	pct.add_theme_constant_override("outline_size", 6)
 	col.add_child(pct)
-
-	if is_you:
-		var hint := Label.new()
-		hint.text = "HOLD SPACE TO FILL"
-		hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		hint.add_theme_font_size_override("font_size", 16)
-		hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
-		col.add_child(hint)
 
 	# Per-panel WINNER/LOSER/DRAW overlay, centered over this side.
 	var overlay := CenterContainer.new()

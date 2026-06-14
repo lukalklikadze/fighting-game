@@ -1,0 +1,24 @@
+[remap]
+
+importer="wav"
+type="AudioStreamWAV"
+uid="uid://l0gvjt02u2bt"
+path="res://.godot/imported/dedashens dausignale.wav-dff8c987ce309c917723223aedde5e68.sample"
+
+[deps]
+
+source_file="res://sounds/English/dedashens dausignale.wav"
+dest_files=["res://.godot/imported/dedashens dausignale.wav-dff8c987ce309c917723223aedde5e68.sample"]
+
+[params]
+
+force/8_bit=false
+force/mono=false
+force/max_rate=false
+force/max_rate_hz=44100
+edit/trim=false
+edit/normalize=false
+edit/loop_mode=0
+edit/loop_begin=0
+edit/loop_end=-1
+compress/mode=2

@@ -9,6 +9,20 @@ const SW     := 1280
 const SH     := 720
 const HALF_W := SW / 2   # 640 — each player owns one half
 
+# Player sprites: idle, right-leg kick, left-leg kick. (Background is a scene node.)
+const FIG_IDLE:   Texture2D = preload("res://assets/juggle0000.png")
+const FIG_KICK_R: Texture2D = preload("res://assets/juggle0002.png")
+const FIG_KICK_L: Texture2D = preload("res://assets/juggle0003.png")
+
+# Georgian-capable font for the player labels (the handwriting font lacks glyphs).
+const GEORGIAN_FONT: FontFile = preload("res://assets/fonts/NotoSansGeorgian-Black.ttf")
+const FIG_HEIGHT   := 230.0   # on-screen sprite height
+const FIG_FOOT_PAD := 14.0    # nudge so the drawn feet rest on the ground line
+# Head centre within the sprite (measured from juggle0000.png) for headers.
+const HEAD_CX_FRAC := 0.456   # head centre X as a fraction of sprite width
+const HEAD_CY_FRAC := 0.203   # head centre Y as a fraction of sprite height (0 = top)
+const HEAD_HIT_R   := 26.0    # header contact radius
+
 const GRASS_H   := 70.0
 const GROUND_Y:  float = SH - GRASS_H   # 650 — feet rest here; ball here = lose
 const CEILING_Y := 36.0
@@ -82,6 +96,26 @@ var _net_elapsed := 0.0
 var op_kick_count := 0
 var _net_resolved := false   # host: winner decided
 
+# ─── Character names (resolved from MatchSetup: which fighter each side picked) ──
+var local_char := ""
+var opp_char := ""
+const CHAR_NAMES := {
+	"georgian": "ჯოტია ცაავა",
+	"english":  "ლოთი ინგლისელი",
+	"scotish":  "კაბიანი შოტლანდიელი",
+	"scottish": "კაბიანი შოტლანდიელი",
+}
+
+# ─── Instruction card (shown over the frozen game before each round) ───────────
+const INSTRUCTION_TEX: Texture2D = preload("res://assets/mini_game_instruction_2.png")
+const INSTRUCTION_W := 500.0
+const INSTRUCTION_TIME := 3.0
+var _showing_instruction := false
+
+# ─── Audio ────────────────────────────────────────────────────────────────────
+const BALL_SFX: AudioStream = preload("res://sounds/SFX/ball.wav")
+var _ball_sfx: AudioStreamPlayer
+
 # ─── UI ───────────────────────────────────────────────────────────────────────
 var _font           : Font
 var _countdown_text := ""   # drawn over the pitch before game_on
@@ -103,6 +137,10 @@ func _ready() -> void:
 	chubby.base_font = base_font
 	chubby.variation_embolden = 0.6
 	_font = chubby
+	_ball_sfx = AudioStreamPlayer.new()
+	_ball_sfx.stream = BALL_SFX
+	add_child(_ball_sfx)
+	_resolve_chars()
 	if not embedded:
 		begin_solo()
 
@@ -116,7 +154,7 @@ func begin_solo() -> void:
 	my_kick_count = 0
 	my_ball = Vector2(HALF_W / 2.0, SH / 2.0)
 	my_bvel = Vector2(randf_range(-80.0, 80.0), -380.0)
-	_run_countdown()
+	_start_round()
 
 
 # Networked embedded entry: runs over the fight's peer. Host starts both via the
@@ -140,7 +178,7 @@ func _net_start() -> void:
 	_net_resolved = false
 	my_ball = Vector2(HALF_W / 2.0, SH / 2.0)
 	my_bvel = Vector2(randf_range(-80.0, 80.0), -380.0)
-	_run_countdown()
+	_start_round()
 
 
 # A ball hit the ground. The host serializes drops so the first one always loses
@@ -194,6 +232,15 @@ func _emit_embedded_result(result: int) -> void:
 	await get_tree().create_timer(1.1).timeout  # let the WINNER/LOSER banner show
 	minigame_finished.emit(result)
 
+# Show the instruction card over the frozen game, then run the countdown.
+func _start_round() -> void:
+	_showing_instruction = true
+	queue_redraw()
+	await get_tree().create_timer(INSTRUCTION_TIME).timeout
+	_showing_instruction = false
+	_run_countdown()
+
+
 func _run_countdown() -> void:
 	for n in [3, 2, 1]:
 		_countdown_text = str(n)
@@ -242,6 +289,7 @@ func _update(delta: float) -> void:
 		if absf(my_ball.x - foot_x) < BALL_R + 20.0 and absf(my_ball.y - foot_y) < BALL_R + 26.0:
 			my_kick_hit = true
 			my_kick_count += 1
+			_ball_sfx.play()
 			if embedded and not networked and my_kick_count >= EMBED_WIN_KICKS:
 				winner = "you"   # solo only: kept the ball up long enough
 			var dir_x := (my_ball.x - my_x) * 1.3
@@ -258,6 +306,20 @@ func _update(delta: float) -> void:
 		my_ball.x = WALL_R - BALL_R;  my_bvel.x = -absf(my_bvel.x) * BOUNCE_DAMP
 	if my_ball.y - BALL_R < CEILING_Y:
 		my_ball.y = CEILING_Y + BALL_R; my_bvel.y = absf(my_bvel.y) * BOUNCE_DAMP
+
+	# ── Header: a descending ball that lands on the head juggles up too ───────
+	if my_bvel.y > 0.0:
+		var head_x := my_x + (HEAD_CX_FRAC - 0.5) * FIG_HEIGHT
+		var head_y := GROUND_Y + FIG_FOOT_PAD - FIG_HEIGHT + HEAD_CY_FRAC * FIG_HEIGHT
+		if Vector2(my_ball.x - head_x, my_ball.y - head_y).length() < HEAD_HIT_R + BALL_R:
+			my_ball.y = head_y - (HEAD_HIT_R + BALL_R)   # sit the ball on top of the head
+			my_kick_count += 1
+			_ball_sfx.play()
+			if embedded and not networked and my_kick_count >= EMBED_WIN_KICKS:
+				winner = "you"
+			var dir_x := (my_ball.x - head_x) * 1.6
+			var rnd_x := randf_range(-KICK_RAND_X * 0.5, KICK_RAND_X * 0.5)
+			my_bvel = Vector2(dir_x + rnd_x, KICK_VEL_Y * 0.9) * my_speed
 
 	if my_ball.y + BALL_R >= GROUND_Y:
 		my_alive = false
@@ -303,97 +365,18 @@ func _net_lost() -> void:
 
 # ══════════════════════════════════ DRAW ══════════════════════════════════════
 func _draw() -> void:
-	_draw_pitch()
 	_draw_half(0.0,    my_x, my_lean, my_ball, my_kick, my_alive, true,  my_kick_right)
 	_draw_half(HALF_W, op_x, op_lean, op_ball, op_kick, op_alive, false, op_kick_right)
 	if game_on and winner == "":
 		_lbl_outlined(Vector2(38.0, 130.0), str(my_kick_count), Color.WHITE, 52)
-	if _countdown_text != "":
-		_lbl(Vector2(SW / 2.0, SH / 2.0), _countdown_text, Color.WHITE, 96)
+	if _showing_instruction:
+		var iw := INSTRUCTION_W
+		var ih := iw * float(INSTRUCTION_TEX.get_height()) / float(INSTRUCTION_TEX.get_width())
+		draw_texture_rect(INSTRUCTION_TEX, Rect2((SW - iw) * 0.5, (SH - ih) * 0.5, iw, ih), false)
+	elif _countdown_text != "":
+		_lbl(Vector2(SW / 2.0, SH / 2.0), _countdown_text, Color("#1f7a3d"), 96)
 	elif winner != "":
 		_draw_banner()
-
-# ── Night stadium pitch (same style as typeracer) ────────────────────────────
-func _draw_pitch() -> void:
-	var t := Time.get_ticks_msec() * 0.001
-	var crowd := 68.0   # stand height top and bottom
-
-	# Stadium base
-	draw_rect(Rect2(0, 0, SW, SH), Color("#070b1f"))
-	draw_rect(Rect2(0, 0, SW, SH * 0.5), Color(0.10, 0.14, 0.31, 0.22))
-
-	# Stands
-	draw_rect(Rect2(0, 0, SW, crowd), Color("#0b1230"))
-	draw_rect(Rect2(0, SH - crowd, SW, crowd), Color("#0b1230"))
-	_draw_crowd_dots(0.0, crowd)
-	_draw_crowd_dots(SH - crowd, crowd)
-	draw_rect(Rect2(0, crowd - 6, SW, 6), Color("#11183a"))
-	draw_rect(Rect2(0, SH - crowd, SW, 6), Color("#11183a"))
-
-	# Mown grass stripes
-	var stripe_w := float(SW) / 16.0
-	var py := crowd
-	var ph := SH - 2.0 * crowd
-	var sx := 0.0
-	var si := 0
-	while sx < SW:
-		var sc := Color("#2e8f4e") if si % 2 == 0 else Color("#2a833f")
-		draw_rect(Rect2(sx, py, minf(stripe_w, SW - sx), ph), sc)
-		sx += stripe_w
-		si += 1
-
-	# Ground line
-	draw_line(Vector2(0, GROUND_Y), Vector2(SW, GROUND_Y), Color(1, 1, 1, 0.45), 2.0)
-
-	# Centre divider — pulsing glow like typeracer
-	var pulse := 0.55 + 0.45 * sin(t * 1.6)
-	var dy := py + ph * 0.03
-	var dh := ph * 0.94
-	draw_rect(Rect2(HALF_W - 7, dy, 14, dh), Color(0.6, 0.72, 1.0, 0.12 * pulse))
-	draw_rect(Rect2(HALF_W - 3, dy, 6,  dh), Color(0.8, 0.86, 1.0, 0.30 * pulse))
-	draw_rect(Rect2(HALF_W - 1.5, dy, 3, dh), Color(1, 1, 1, 0.92))
-	# Floodlights
-	for fx: float in [0.09, 0.5, 0.91]:
-		_draw_floodlight(SW * fx, t, true)
-		_draw_floodlight(SW * fx, t, false)
-
-	# Edge vignette
-	var vig := Color(0.016, 0.027, 0.07, 0.45)
-	draw_rect(Rect2(0, 0, SW, 4), vig)
-	draw_rect(Rect2(0, SH - 4, SW, 4), vig)
-	draw_rect(Rect2(0, 0, 4, SH), vig)
-	draw_rect(Rect2(SW - 4, 0, 4, SH), vig)
-
-
-func _draw_crowd_dots(top: float, band_h: float) -> void:
-	var step := 18.0
-	var y := top + 5.0
-	while y < top + band_h - 3.0:
-		var x := 5.0
-		while x < SW:
-			draw_circle(Vector2(x, y), 1.0, Color(0.84, 0.88, 1.0, 0.5))
-			x += step
-		y += step
-
-
-func _draw_floodlight(x: float, t: float, top: bool) -> void:
-	var bank_w := 34.0
-	var bank_h := 15.0
-	var pole_h := 38.0
-	var bank_y := 8.0 if top else SH - 8.0 - bank_h
-	var pole_y := bank_y + bank_h if top else bank_y - pole_h
-	var center := Vector2(x, bank_y + bank_h * 0.5)
-	var glow   := 0.85 + 0.15 * sin(t * 1.1)
-	for k in range(4):
-		draw_circle(center, 62.0 * glow * (1.0 - float(k) / 4.0 * 0.55),
-				Color(1.0, 0.97, 0.88, 0.10))
-	draw_rect(Rect2(x - 2.0, pole_y, 4.0, pole_h), Color("#283154"))
-	draw_rect(Rect2(x - bank_w * 0.5, bank_y, bank_w, bank_h), Color("#0c1228"))
-	var face := Rect2(x - bank_w * 0.5 + 2.0, bank_y + 2.0, bank_w - 4.0, bank_h - 4.0)
-	draw_rect(face, Color(1.0, 0.97, 0.85, 0.95 * glow))
-	for k in range(1, 4):
-		var lx := face.position.x + face.size.x * float(k) / 4.0
-		draw_rect(Rect2(lx, face.position.y, 1.0, face.size.y), Color("#0c1228"))
 
 # ── One player's half ─────────────────────────────────────────────────────────
 func _draw_half(ox: float, fig_x: float, lean: float, ball: Vector2,
@@ -413,132 +396,29 @@ func _draw_half(ox: float, fig_x: float, lean: float, ball: Vector2,
 	else:
 		_draw_fallen(Vector2(ox + fig_x, GROUND_Y), fig_col)
 
-	var label := "YOU  [A / D + SPACE]" if is_mine else ("OPPONENT" if op_alive else ("—" if solo else "WAITING…"))
-	_lbl(Vector2(ox + HALF_W / 2.0, 86.0), label, Color.WHITE, 14)
+	var label := _char_name(local_char) if is_mine else _char_name(opp_char)
+	_lbl_georgian(Vector2(ox + HALF_W / 2.0, 64.0), label, Color.WHITE, 34)
 
 # ── Stick figure ──────────────────────────────────────────────────────────────
-func _draw_figure(hip: Vector2, lean: float, kick_t: float, col: Color, kick_right: bool) -> void:
-	var lw  := 4.0
-	var lw2 := 3.0
-	var p   := 0.0
+func _draw_figure(hip: Vector2, _lean: float, kick_t: float, _col: Color, kick_right: bool) -> void:
+	# Pick the pose: idle, or right/left kick while a swing is active.
+	var tex := FIG_IDLE
 	if kick_t > 0.0:
-		p = sin((1.0 - kick_t / KICK_DURATION) * PI)
+		tex = FIG_KICK_R if kick_right else FIG_KICK_L
+	var h := FIG_HEIGHT
+	var w := h   # source sprites are square
+	# hip.x is the figure centre; align the sprite's feet to the ground line.
+	var top := GROUND_Y + FIG_FOOT_PAD - h
+	draw_texture_rect(tex, Rect2(hip.x - w * 0.5, top, w, h), false)
 
-	# ── Upper body ───────────────────────────────────────────────────────────
-	var neck := hip + Vector2(lean * 16.0, -BODY_LEN)
-	var head := neck + Vector2(lean * 5.0, -HEAD_R * 1.6)
 
-	var ls := neck + Vector2(-14.0 - lean * 4.0, 4.0)
-	var rs := neck + Vector2( 14.0 + lean * 4.0, 4.0)
-
-	# ── Legs ─────────────────────────────────────────────────────────────────
-	var thigh := LEG_LEN * 0.50
-	var lk := hip + Vector2(-13.0 + lean * 3.0, thigh)
-	var rk := hip + Vector2( 13.0 + lean * 3.0, thigh)
-	var lf := Vector2(hip.x - 17.0 + lean * 2.0, GROUND_Y)
-	var rf  := Vector2(hip.x + 17.0 + lean * 2.0, GROUND_Y)
-
-	if kick_t > 0.0:
-		if kick_right:
-			rk = hip + Vector2(14.0 + p * 26.0,  thigh * (1.0 - p * 0.5))
-			rf = Vector2(hip.x + 16.0 + p * 56.0, hip.y + LEG_LEN * 0.78 - p * 42.0)
-		else:
-			lk = hip + Vector2(-14.0 - p * 26.0,  thigh * (1.0 - p * 0.5))
-			lf = Vector2(hip.x - 16.0 - p * 56.0, hip.y + LEG_LEN * 0.78 - p * 42.0)
-
-	# Thighs & shins
-	draw_line(hip, lk, col, lw,  true)
-	draw_line(lk, lf,  col, lw2, true)
-	draw_line(hip, rk, col, lw,  true)
-	draw_line(rk, rf,  col, lw2, true)
-
-	# Knee dots
-	draw_circle(lk, 3.5, col)
-	draw_circle(rk, 3.5, col)
-
-	# Feet
-	if kick_t > 0.0 and not kick_right:
-		draw_line(lf + Vector2(-9.0, p * 3.0), lf + Vector2(4.0, p * -3.0), col, lw2, true)
-	else:
-		draw_line(lf + Vector2(-8.0, 0), lf + Vector2(5.0, 0), col, lw2, true)
-
-	if kick_t > 0.0 and kick_right:
-		draw_line(rf + Vector2(-4.0, p * -3.0), rf + Vector2(9.0, p * 3.0), col, lw2, true)
-	else:
-		draw_line(rf + Vector2(-5.0, 0), rf + Vector2(8.0, 0), col, lw2, true)
-
-	# ── Torso ────────────────────────────────────────────────────────────────
-	draw_line(hip + Vector2(-10.0, 0), hip + Vector2(10.0, 0), col, lw2, true)
-	draw_line(hip, neck, col, lw, true)
-
-	# ── Arms — opposite arm swings back during kick for balance ──────────────
-	var la := ls + Vector2(-ARM_LEN * 0.72 - lean * 10.0, ARM_LEN * 0.78)
-	var ra := rs + Vector2( ARM_LEN * 0.72 + lean * 10.0, ARM_LEN * 0.78)
-	if kick_t > 0.0:
-		if kick_right:
-			la = ls + Vector2(-ARM_LEN * 1.2, -ARM_LEN * 0.30 + p * ARM_LEN * 0.55)
-			ra = rs + Vector2( ARM_LEN * 0.55, -ARM_LEN * 0.18)
-		else:
-			ra = rs + Vector2( ARM_LEN * 1.2, -ARM_LEN * 0.30 + p * ARM_LEN * 0.55)
-			la = ls + Vector2(-ARM_LEN * 0.55, -ARM_LEN * 0.18)
-
-	draw_line(ls, la, col, lw2, true)
-	draw_line(rs, ra, col, lw2, true)
-	draw_circle(la, 3.0, col)
-	draw_circle(ra, 3.0, col)
-
-	# ── Head ─────────────────────────────────────────────────────────────────
-	draw_circle(head, HEAD_R, col)
-	var dark := Color(col.r * 0.25, col.g * 0.25, col.b * 0.25)
-	draw_arc(head, HEAD_R, 0.0, TAU, 20, dark, 1.8)
-	draw_circle(head + Vector2(HEAD_R * 0.36 + lean * 3.5, -HEAD_R * 0.12), 3.0, dark)
-
-func _draw_fallen(base: Vector2, col: Color) -> void:
-	var lw   := 3.5
-	var dark := Color(col.r * 0.22, col.g * 0.22, col.b * 0.22)
-
-	# Anchor points — figure lying on back, body goes left from feet
-	var hips  := base + Vector2(-8.0,  -3.0)
-	var shldr := base + Vector2(-62.0, -9.0)
-	var head  := shldr + Vector2(-HEAD_R * 1.1, -HEAD_R * 0.4)
-
-	# Torso flat on ground
-	draw_line(hips, shldr, col, 4.5, true)
-
-	# Legs — lying along the ground (knees slightly bent, natural)
-	var lk := base + Vector2(20.0, -14.0)   # left knee raised a little
-	var rk := base + Vector2(36.0,  -3.0)   # right knee nearly flat
-	var lf := base + Vector2(38.0,   0.0)   # left foot on ground
-	var rf  := base + Vector2(54.0,  -1.0)  # right foot on ground
-	draw_line(hips, lk, col, lw,        true)
-	draw_line(lk,   lf, col, lw * 0.8,  true)
-	draw_line(hips, rk, col, lw,        true)
-	draw_line(rk,   rf, col, lw * 0.8,  true)
-	# Knee dots
-	draw_circle(lk, 3.0, col)
-	draw_circle(rk, 3.0, col)
-	# Feet flat on ground
-	draw_line(lf + Vector2(-3.0, 0), lf + Vector2(9.0, 0), col, lw * 0.8, true)
-	draw_line(rf + Vector2(-3.0, 0), rf + Vector2(9.0, 0), col, lw * 0.8, true)
-
-	# Left arm — resting on the ground above the head
-	var la := shldr + Vector2(-22.0, 18.0)
-	draw_line(shldr, la, col, lw * 0.85, true)
-	draw_circle(la, 3.0, col)
-
-	# Right arm — resting on ground beside body
-	var ra := shldr + Vector2(16.0, 14.0)
-	draw_line(shldr, ra, col, lw * 0.85, true)
-	draw_circle(ra, 3.0, col)
-
-	# Head lying sideways, slightly off the ground
-	draw_circle(head, HEAD_R, col)
-	draw_arc(head, HEAD_R, 0.0, TAU, 20, dark, 1.8)
-	# Closed eyes (two short X lines)
-	draw_line(head + Vector2(-4.5, -2.5), head + Vector2(-1.5,  0.5), dark, 1.8)
-	draw_line(head + Vector2(-1.5, -2.5), head + Vector2(-4.5,  0.5), dark, 1.8)
-	draw_line(head + Vector2( 0.5, -2.5), head + Vector2( 3.5,  0.5), dark, 1.8)
-	draw_line(head + Vector2( 3.5, -2.5), head + Vector2( 0.5,  0.5), dark, 1.8)
+func _draw_fallen(base: Vector2, _col: Color) -> void:
+	# Lying down = the idle sprite rotated onto its back.
+	var h := FIG_HEIGHT
+	var w := h
+	draw_set_transform(Vector2(base.x, GROUND_Y - h * 0.28), -PI / 2.0, Vector2.ONE)
+	draw_texture_rect(FIG_IDLE, Rect2(-w * 0.5, -h * 0.5, w, h), false)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 # ── Football ──────────────────────────────────────────────────────────────────
 func _draw_ball(pos: Vector2, _col: Color) -> void:
@@ -609,3 +489,28 @@ func _lbl(centre: Vector2, text: String, col: Color, fs: int) -> void:
 	var sz := _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
 	draw_string(_font, centre + Vector2(-sz.x / 2.0, sz.y * 0.35),
 				text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+
+
+# Work out which fighter is on each side (host = Player 1 = p1_choice).
+func _resolve_chars() -> void:
+	var is_host := not multiplayer.has_multiplayer_peer() or multiplayer.is_server()
+	local_char = String(MatchSetup.p1_choice if is_host else MatchSetup.p2_choice)
+	opp_char = String(MatchSetup.p2_choice if is_host else MatchSetup.p1_choice)
+
+
+func _char_name(id: String) -> String:
+	return CHAR_NAMES.get(id, id)
+
+
+# Centred label using the Georgian font, with a dark outline for legibility.
+func _lbl_georgian(centre: Vector2, text: String, col: Color, fs: int) -> void:
+	var sz  := GEORGIAN_FONT.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
+	var pos := centre + Vector2(-sz.x * 0.5, sz.y * 0.35)
+	var dark := Color(0.0, 0.0, 0.0, 0.85)
+	for dx: int in [-2, 0, 2]:
+		for dy: int in [-2, 0, 2]:
+			if dx == 0 and dy == 0:
+				continue
+			draw_string(GEORGIAN_FONT, pos + Vector2(float(dx), float(dy)), text,
+					HORIZONTAL_ALIGNMENT_LEFT, -1, fs, dark)
+	draw_string(GEORGIAN_FONT, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)

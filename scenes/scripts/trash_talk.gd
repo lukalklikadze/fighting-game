@@ -31,8 +31,18 @@ const MATCHUP_DIALOGS := {
 	"georgian|scotish": ["scotish_to_georgian", "georgian_to_scotish"],
 }
 
+# Voice clip played when a given dialog image appears; the scene then holds for
+# the clip's length so the line can finish before the fight starts.
+const DIALOG_SFX := {
+	"georgian_to_scotish": preload("res://sounds/Shit Talk/jotia vs scot.wav"),
+	"georgian_to_english": preload("res://sounds/Shit Talk/jotia vs eng.wav"),
+}
+const ANSWER_TAIL := 1.0   # hold after the answer when there's no clip
+
 var _monologue: TextureRect
 var _answer: TextureRect
+var _answer_token := ""
+var _sfx: AudioStreamPlayer
 
 
 func _ready() -> void:
@@ -65,8 +75,12 @@ func _build_scene() -> void:
 	_monologue = _make_dialog(layer, files[0] if files.size() > 0 else "")
 	_monologue.position = Vector2(110, 70)
 
-	_answer = _make_dialog(layer, files[1] if files.size() > 1 else "")
+	_answer_token = files[1] if files.size() > 1 else ""
+	_answer = _make_dialog(layer, _answer_token)
 	_answer.position = Vector2(SW - DIALOG_W - 110, SH - DIALOG_H - 70)
+
+	_sfx = AudioStreamPlayer.new()
+	add_child(_sfx)
 
 
 func _matchup_dialog_files() -> Array:
@@ -100,11 +114,22 @@ func _reveal() -> void:
 	# Monologue is on screen from the start; the answer appears after a beat.
 	_monologue.modulate.a = 1.0
 	_answer.modulate.a = 0.0
+	# If the answer has a voice clip, hold the scene for its full length.
+	var clip: AudioStream = DIALOG_SFX.get(_answer_token, null)
+	var tail: float = clip.get_length() if clip != null else ANSWER_TAIL
 	var tween := create_tween()
 	tween.tween_interval(MONOLOGUE_TIME)
 	tween.tween_property(_answer, "modulate:a", 1.0, 0.4)
-	tween.tween_interval(1.0)
+	tween.tween_callback(_play_answer_clip)
+	tween.tween_interval(tail)
 	tween.tween_callback(_go_to_fight)
+
+
+func _play_answer_clip() -> void:
+	var clip: AudioStream = DIALOG_SFX.get(_answer_token, null)
+	if clip != null:
+		_sfx.stream = clip
+		_sfx.play()
 
 
 # Host drives the hand-off into the fight so both players leave together; the

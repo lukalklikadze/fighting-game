@@ -1,8 +1,9 @@
 [gd_scene format=3 uid="uid://c5t80abeerpr2"]
 
-[ext_resource type="Script" path="res://minigames/beer/scripts/beer.gd" id="1_beer"]
+[ext_resource type="Script" uid="uid://cblpn6fego8f4" path="res://minigames/beer/scripts/beer.gd" id="1_beer"]
+[ext_resource type="Texture2D" uid="uid://d2o2k8cqmrhrg" path="res://assets/beer_back.png" id="2_h3rp0"]
 
-[node name="Beer" type="Control"]
+[node name="Beer" type="Control" unique_id=1029838936]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -10,3 +11,8 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_beer")
+
+[node name="back" type="Sprite2D" parent="." unique_id=1920015898]
+position = Vector2(642.8889, 364)
+scale = Vector2(0.6703704, 0.67037034)
+texture = ExtResource("2_h3rp0")

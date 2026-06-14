@@ -1,17 +1,4 @@
 extends Node2D
-## Online start screen.
-##
-## Keyboard-driven flow:
-##   * Menu:   A / D move between START and JOIN, ENTER confirms. T = test mode.
-##   * START:  host a game, show a share code, wait for Player 2 (selection stays
-##             locked until they join).
-##   * JOIN:   jump to the code text bar; type a friend's code and press ENTER.
-##             Selection unlocks once you're connected.
-##   * SELECT: A / D highlight one of the four footballs, ENTER chooses it.
-##   * TEST:   unlock the selection screen solo (mock opponent) just to preview
-##             how it looks -- never starts a real fight.
-## Drag CharacterDisplay / OpponentDisplay in the editor to place where each
-## fighter appears -- the script only swaps their textures.
 
 const LAN_PORT := 7777
 const JOIN_CODE_ALPHABET := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -26,18 +13,16 @@ const CHAR_TEXTURES := {
 const BALL_ORDER := ["georgian", "scottish", "english", "random"]
 const SELECTED_SCALE := 1.18
 const DIMMED := Color(0.65, 0.65, 0.65, 1.0)
+const MENU_SELECTED := Color(0.45, 0.45, 0.45, 1.0)
 
 const MENU_FONT: FontFile = preload("res://assets/fonts/NotoSansGeorgian-Black.ttf")
 
-# Hit areas over the baked-in START / JOIN words (also used to place the focus box).
-const START_RECT := Rect2(317, 556, 160, 96)
-const JOIN_RECT := Rect2(773, 549, 125, 74)
-
-# High-level state of the lobby.
 enum Menu { CHOICES, CODE_ENTRY, WAIT, SELECT }
 
 @onready var _character_display: Sprite2D = $CharacterDisplay
 @onready var _opponent_display: Sprite2D = $OpponentDisplay
+@onready var _start_sprite: Sprite2D = $start
+@onready var _join_sprite: Sprite2D = $join
 
 var _balls: Dictionary = {}
 var _base_scale: Dictionary = {}
@@ -48,16 +33,12 @@ var _starting := false
 var _selection_enabled := false
 
 var _menu := Menu.CHOICES
-var _menu_index := 0   # 0 = START, 1 = JOIN
+var _menu_index := 0
 var _test_mode := false
 
 var _code_edit: LineEdit
 var _code_label: Label
 var _status_label: Label
-var _menu_highlight: Panel
-var _menu_glow: ColorRect
-var _start_button: Button
-var _join_button: Button
 
 var _hosting_active := false
 var _connected_as_client := false
@@ -67,9 +48,6 @@ var _join_timeout_timer := 0.0
 
 
 func _ready() -> void:
-	# Match the fight scene: fullscreen 16:9 so the stadium art fills the screen.
-	# (Windowed/odd aspects let "expand" stretch reveal bare edges past the art;
-	# tint the clear color to the seats' navy so any sliver blends in.)
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 	RenderingServer.set_default_clear_color(Color(0.05, 0.10, 0.25, 1.0))
 	randomize()
@@ -77,28 +55,19 @@ func _ready() -> void:
 		var ball := get_node(NodePath(ball_name)) as Sprite2D
 		_balls[ball_name] = ball
 		_base_scale[ball_name] = ball.scale
-	# Nothing is shown until both players are in and selection is enabled.
 	_character_display.visible = false
 	_opponent_display.visible = false
 	_build_ui()
 	_connect_multiplayer_signals()
 	_update_highlight()
-	# Coming back from a finished match the connection is still live -> drop both
-	# players straight back onto this select screen instead of the START/JOIN menu.
-	if multiplayer.has_multiplayer_peer() and multiplayer.get_peers().size() > 0:
-		_resume_connected_lobby()
-	else:
-		_show_choices()
+	_show_choices()
 
 
 func _process(delta: float) -> void:
 	_process_join_timeout(delta)
 
 
-# ── Input ──────────────────────────────────────────────────────────────────
-
 func _unhandled_input(event: InputEvent) -> void:
-	# While typing a code, let the field handle keys (ESC backs out).
 	if _code_edit != null and _code_edit.has_focus():
 		if event.is_action_pressed("ui_cancel"):
 			_code_edit.release_focus()
@@ -110,7 +79,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		Menu.SELECT:
 			_select_input(event)
 		_:
-			pass  # WAIT / CODE_ENTRY: nothing to navigate yet
+			pass
 
 
 func _menu_input(event: InputEvent) -> void:
@@ -132,29 +101,11 @@ func _select_input(event: InputEvent) -> void:
 	if _key_right(event):
 		_selected = (_selected + 1) % BALL_ORDER.size()
 		_update_highlight()
-		_broadcast_hover()
 	elif _key_left(event):
 		_selected = (_selected - 1 + BALL_ORDER.size()) % BALL_ORDER.size()
 		_update_highlight()
-		_broadcast_hover()
 	elif event.is_action_pressed("ui_accept"):
 		_choose(_selected)
-
-
-# Show the opponent your live cursor (not just your final pick), so each player
-# sees what the other is currently selecting.
-func _broadcast_hover() -> void:
-	if _test_mode:
-		return
-	if _hosting_active or _connected_as_client:
-		_rpc_set_opponent_hover.rpc(_selected)
-
-
-@rpc("any_peer", "call_remote", "reliable")
-func _rpc_set_opponent_hover(index: int) -> void:
-	index = clampi(index, 0, BALL_ORDER.size() - 1)
-	_opponent_display.texture = CHAR_TEXTURES[BALL_ORDER[index]]
-	_opponent_display.visible = true
 
 
 func _activate_menu() -> void:
@@ -176,8 +127,6 @@ func _key_pressed(event: InputEvent, code: int) -> bool:
 	return event is InputEventKey and event.pressed and not event.echo and event.keycode == code
 
 
-# ── Menu actions ─────────────────────────────────────────────────────────────
-
 func _activate_start() -> void:
 	_host_game()
 
@@ -193,11 +142,9 @@ func _activate_join() -> void:
 
 
 func _enter_test_mode() -> void:
-	# Preview the selection screen solo -- no networking, never starts a fight.
 	_test_mode = true
 	_menu = Menu.SELECT
 	_apply_menu_visibility()
-	# Show a mock opponent so the screen looks complete.
 	_opp_chosen = 1
 	_opponent_display.texture = CHAR_TEXTURES[BALL_ORDER[_opp_chosen]]
 	_opponent_display.visible = true
@@ -205,22 +152,18 @@ func _enter_test_mode() -> void:
 	_set_status("")
 
 
-# ── Ball selection ───────────────────────────────────────────────────────────
-
 func _set_selection_enabled(enabled: bool) -> void:
 	_selection_enabled = enabled
 	_update_highlight()
 
 
 func _update_highlight() -> void:
-	# Before selection is unlocked, the balls sit neutral and no fighter is shown.
 	if not _selection_enabled:
 		for ball_name in BALL_ORDER:
 			_balls[ball_name].scale = _base_scale[ball_name]
 			_balls[ball_name].modulate = Color.WHITE
 		_character_display.visible = false
 		return
-	# Moving the cursor grows/dims the balls and previews the highlighted fighter.
 	for i in range(BALL_ORDER.size()):
 		var ball_name: String = BALL_ORDER[i]
 		var ball: Sprite2D = _balls[ball_name]
@@ -235,14 +178,11 @@ func _update_highlight() -> void:
 
 
 func _choose(index: int) -> void:
-	# RANDOM resolves to a concrete fighter (avoiding the opponent's, if known)
-	# so the matchup always maps to a real trash-talk dialog and fighter.
 	if BALL_ORDER[index] == "random":
 		index = _resolve_random()
 	_chosen = index
 	_character_display.texture = CHAR_TEXTURES[BALL_ORDER[index]]
 	_character_display.visible = true
-	# Tell the other player which fighter we picked (already resolved).
 	if _hosting_active or _connected_as_client:
 		_rpc_set_opponent_choice.rpc(index)
 	if _test_mode:
@@ -252,7 +192,6 @@ func _choose(index: int) -> void:
 
 
 func _resolve_random() -> int:
-	# Concrete fighters are indices 0..2 (georgian, scottish, english).
 	var pool := [0, 1, 2]
 	if _opp_chosen in pool:
 		pool.erase(_opp_chosen)
@@ -268,8 +207,6 @@ func _rpc_set_opponent_choice(index: int) -> void:
 	_maybe_start()
 
 
-# Once BOTH players have picked, the host launches the fight, carrying both
-# choices + the live connection into the fight scene.
 func _maybe_start() -> void:
 	if _starting or _test_mode or not _hosting_active:
 		return
@@ -277,8 +214,8 @@ func _maybe_start() -> void:
 		return
 	_starting = true
 	_set_status("Starting fight...")
-	var host_key: String = BALL_ORDER[_chosen]       # host = Player 1
-	var client_key: String = BALL_ORDER[_opp_chosen] # client = Player 2
+	var host_key: String = BALL_ORDER[_chosen]
+	var client_key: String = BALL_ORDER[_opp_chosen]
 	_rpc_goto_fight.rpc(host_key, client_key, _client_peer_id)
 	_goto_fight(host_key, client_key, _client_peer_id)
 
@@ -293,9 +230,6 @@ func _goto_fight(p1_key: String, p2_key: String, cpid: int) -> void:
 	MatchSetup.p1_choice = p1_key
 	MatchSetup.p2_choice = p2_key
 	MatchSetup.client_peer_id = cpid
-	# The ENet peer persists across the scene change. Detour through the bar
-	# cutscene + trash talk; the fight is launched at the end of trash talk
-	# (host-driven) using this same MatchSetup data.
 	get_tree().change_scene_to_file("res://bar.tscn")
 
 
@@ -304,31 +238,9 @@ func _send_choice_to(peer_id: int) -> void:
 		_rpc_set_opponent_choice.rpc_id(peer_id, _chosen)
 
 
-# ── Lobby UI ─────────────────────────────────────────────────────────────────
-
 func _build_ui() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
-
-	# Focus box that sits over START / JOIN while in the menu.
-	_menu_highlight = Panel.new()
-	var hl_style := StyleBoxFlat.new()
-	hl_style.bg_color = Color(1.0, 0.85, 0.30, 0.12)
-	hl_style.border_color = Color(1.0, 0.85, 0.30, 0.95)
-	hl_style.set_border_width_all(4)
-	hl_style.set_corner_radius_all(12)
-	_menu_highlight.add_theme_stylebox_override("panel", hl_style)
-	_menu_highlight.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	layer.add_child(_menu_highlight)
-
-	# Soft additive glow that brightens the baked START / JOIN word when focused.
-	_menu_glow = ColorRect.new()
-	_menu_glow.color = Color(1.0, 0.93, 0.62, 0.22)
-	var glow_mat := CanvasItemMaterial.new()
-	glow_mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
-	_menu_glow.material = glow_mat
-	_menu_glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	layer.add_child(_menu_glow)
 
 	_code_label = _make_label("ENTER A CODE TO JOIN", 16, Color(0.88, 0.94, 1.0, 1.0))
 	_code_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -352,15 +264,6 @@ func _build_ui() -> void:
 	_code_edit.text_submitted.connect(func(_t): _join_game())
 	layer.add_child(_code_edit)
 
-	# Invisible hit areas over the baked-in START / JOIN words (mouse still works).
-	_start_button = _make_overlay_button(START_RECT)
-	_start_button.pressed.connect(_activate_start)
-	layer.add_child(_start_button)
-
-	_join_button = _make_overlay_button(JOIN_RECT)
-	_join_button.pressed.connect(_activate_join)
-	layer.add_child(_join_button)
-
 	_status_label = _make_label("", 15, Color(0.85, 0.92, 0.88, 1.0))
 	_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -377,52 +280,22 @@ func _show_choices() -> void:
 	_set_status("")
 
 
-# Re-entered with a live connection (after a match) -> straight to selection.
-func _resume_connected_lobby() -> void:
-	if multiplayer.is_server():
-		_hosting_active = true
-		_connected_as_client = false
-		_client_peer_id = multiplayer.get_peers()[0]
-	else:
-		_connected_as_client = true
-		_hosting_active = false
-		_client_peer_id = multiplayer.get_unique_id()
-	_chosen = -1
-	_opp_chosen = -1
-	_starting = false
-	_selected = 0
-	_menu = Menu.SELECT
-	_apply_menu_visibility()
-	_opponent_display.visible = false
-	_set_selection_enabled(true)
-	_set_status("Both players in — pick your fighter!")
-	_broadcast_hover()
-
-
 func _apply_menu_visibility() -> void:
-	var in_choices := _menu == Menu.CHOICES
 	var entering_code := _menu == Menu.CODE_ENTRY
 	var hosting_wait := _menu == Menu.WAIT
-	if _menu_highlight != null:
-		_menu_highlight.visible = in_choices
-	if _menu_glow != null:
-		_menu_glow.visible = in_choices
 	if _code_label != null:
 		_code_label.visible = entering_code or hosting_wait
 	if _code_edit != null:
 		_code_edit.visible = entering_code or hosting_wait
+	_update_menu_highlight()
 
 
 func _update_menu_highlight() -> void:
-	if _menu_highlight == null:
+	if _start_sprite == null or _join_sprite == null:
 		return
-	var r := START_RECT if _menu_index == 0 else JOIN_RECT
-	_menu_highlight.position = r.position - Vector2(12, 12)
-	_menu_highlight.size = r.size + Vector2(24, 24)
-	if _menu_glow != null:
-		# Hug the word a little tighter than the box so it reads as a lit button.
-		_menu_glow.position = r.position - Vector2(6, 6)
-		_menu_glow.size = r.size + Vector2(12, 12)
+	var in_choices := _menu == Menu.CHOICES
+	_start_sprite.modulate = MENU_SELECTED if (in_choices and _menu_index == 0) else Color.WHITE
+	_join_sprite.modulate = MENU_SELECTED if (in_choices and _menu_index == 1) else Color.WHITE
 
 
 func _field_style(focused: bool) -> StyleBoxFlat:
@@ -451,17 +324,6 @@ func _make_label(text: String, size: int, color: Color) -> Label:
 	return label
 
 
-func _make_overlay_button(rect: Rect2) -> Button:
-	# Completely invisible click area — the highlight is on the baked word itself.
-	var button := Button.new()
-	button.position = rect.position
-	button.size = rect.size
-	button.focus_mode = Control.FOCUS_NONE
-	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
-		button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
-	return button
-
-
 func _set_status(text: String) -> void:
 	if _status_label != null:
 		_status_label.text = text
@@ -469,15 +331,9 @@ func _set_status(text: String) -> void:
 
 func _refresh_lobby_controls() -> void:
 	var locked := _hosting_active or _connected_as_client
-	if _start_button != null:
-		_start_button.disabled = locked
-	if _join_button != null:
-		_join_button.disabled = locked
 	if _code_edit != null:
 		_code_edit.editable = not locked
 
-
-# ── Networking ───────────────────────────────────────────────────────────────
 
 func _connect_multiplayer_signals() -> void:
 	multiplayer.peer_connected.connect(_on_peer_connected)
@@ -503,7 +359,7 @@ func _host_game() -> void:
 	_code_edit.editable = false
 	_code_edit.text = code
 	_code_label.text = "გააზიარე კოდი"
-	_set_status("Share this code. Waiting for Player 2 to join...")
+	_set_status("")
 	_refresh_lobby_controls()
 
 
@@ -566,7 +422,6 @@ func _on_peer_connected(peer_id: int) -> void:
 		_set_status("Both players in — pick your fighter!")
 		_set_selection_enabled(true)
 		_send_choice_to(peer_id)
-		_broadcast_hover()
 
 
 func _on_peer_disconnected(peer_id: int) -> void:
@@ -591,7 +446,6 @@ func _on_connected_to_server() -> void:
 	_refresh_lobby_controls()
 	_set_selection_enabled(true)
 	_send_choice_to(1)
-	_broadcast_hover()
 
 
 func _on_connection_failed() -> void:
@@ -607,8 +461,6 @@ func _on_server_disconnected() -> void:
 	_show_choices()
 	_set_status("Disconnected from host.")
 
-
-# ── Join-code helpers (port of WhiteWorldTest) ──────────────────────────────
 
 func _parse_join_address(raw_text: String) -> String:
 	var address := raw_text.strip_edges()
