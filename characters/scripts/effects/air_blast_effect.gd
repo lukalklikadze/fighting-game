@@ -23,8 +23,8 @@ const SMOKE_FRAMES := [
 	"res://assets/bagpipe smoke/Smoke VFX A9.png",
 ]
 const SMOKE_SCALE := 6.0             # 48x32 source art -> ~288x192 gust
-const SMOKE_FORWARD := 96.0          # initial offset in front of the pipe (starts further out)
-const SMOKE_LIFT := 44.0             # raise the smoke a little so it leaves the pipe higher
+const SMOKE_FORWARD := 30.0          # near the sprite's middle, where the bagpipe sits
+const SMOKE_LIFT := 90.0             # up at the bagpipe height (upper-middle of the sprite)
 # Travels outward to ~REACH over its lifetime so it reads as a gust blowing out.
 const SMOKE_TRAVEL_SPEED := 480.0
 
