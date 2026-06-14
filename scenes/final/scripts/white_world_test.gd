@@ -46,6 +46,20 @@ const WIN_CARDS := {
 	"scottish": preload("res://assets/scotish_win.png"),
 }
 const WIN_CARD_TIME := 3.0
+
+# Final win screen (full-screen image + voice line for the match winner).
+const WIN_SCREEN_IMG := {
+	"english":  preload("res://assets/english win.png"),
+	"georgian": preload("res://assets/georgian win.png"),
+	"scotish":  preload("res://assets/scotish win.png"),
+	"scottish": preload("res://assets/scotish win.png"),
+}
+const WIN_SCREEN_SFX := {
+	"english":  preload("res://sounds/English/aba vina vart.wav"),
+	"georgian": preload("res://sounds/Georgian/georgia win.wav"),
+	"scotish":  preload("res://sounds/Shit Talk/scott.wav"),
+	"scottish": preload("res://sounds/Shit Talk/scott.wav"),
+}
 # Fight background music — played in order and looped until the fight ends.
 const FIGHT_MUSIC := [
 	preload("res://sounds/Songs/Waka Waka.mp3"),
@@ -126,6 +140,8 @@ var _code_edit: LineEdit
 var _host_code_label: Label
 var _status_label: Label
 var _victory_label: Label
+var _win_overlay: TextureRect
+var _win_sfx: AudioStreamPlayer
 var _music: AudioStreamPlayer
 var _music_idx := 0
 var _win_voice: AudioStreamPlayer
@@ -395,6 +411,17 @@ func _update_quit_visibility() -> void:
 
 
 func _build_victory_banner(layer: CanvasLayer) -> void:
+	# Full-screen winner image, sits behind the "PLAYER X WINS" text.
+	_win_overlay = TextureRect.new()
+	_win_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_win_overlay.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_win_overlay.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_win_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_win_overlay.visible = false
+	layer.add_child(_win_overlay)
+	_win_sfx = AudioStreamPlayer.new()
+	add_child(_win_sfx)
+
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -869,6 +896,8 @@ func _show_match_screen() -> void:
 	_fight_layer.visible = true
 	if _victory_label != null:
 		_victory_label.visible = false
+	if _win_overlay != null:
+		_win_overlay.visible = false
 	_set_match_enabled(true)
 	_refresh_health_hud()
 	_refresh_special_hud()
@@ -1817,7 +1846,10 @@ func _play_victory(winner: int) -> void:
 		return
 	var wait := VICTORY_DISPLAY_TIME
 	if _death_sfx != null and _death_sfx.stream != null:
-		wait = maxf(VICTORY_DISPLAY_TIME, _death_sfx.stream.get_length())
+		wait = maxf(wait, _death_sfx.stream.get_length())
+	var win_snd: AudioStream = WIN_SCREEN_SFX.get(_winner_character(winner), null)
+	if win_snd != null:
+		wait = maxf(wait, win_snd.get_length())
 	await get_tree().create_timer(wait).timeout
 	if not _match_end_sent or _screen != ScreenState.MATCH:
 		return
@@ -1827,11 +1859,27 @@ func _play_victory(winner: int) -> void:
 
 
 func _show_victory_banner(winner: int) -> void:
+	# Full-screen winner image + their victory voice line.
+	var winner_char := _winner_character(winner)
+	if _win_overlay != null:
+		var img: Texture2D = WIN_SCREEN_IMG.get(winner_char, null)
+		_win_overlay.texture = img
+		_win_overlay.visible = img != null
+	if _win_sfx != null:
+		var snd: AudioStream = WIN_SCREEN_SFX.get(winner_char, null)
+		if snd != null:
+			_win_sfx.stream = snd
+			_win_sfx.play()
 	if _victory_label == null:
 		return
 	_victory_label.text = "PLAYER %d WINS!" % winner
 	_victory_label.add_theme_color_override("font_color", P1_COLOR if winner == 1 else P2_COLOR)
 	_victory_label.visible = true
+
+
+func _winner_character(winner: int) -> String:
+	var node: Node2D = player_one if winner == 1 else player_two
+	return String(node.get_meta("character_id", ""))
 
 
 func _on_fighter_died(_player_id: int) -> void:
