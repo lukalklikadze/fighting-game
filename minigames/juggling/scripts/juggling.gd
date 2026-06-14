@@ -340,20 +340,6 @@ func _update(delta: float) -> void:
 	if my_ball.y - BALL_R < CEILING_Y:
 		my_ball.y = CEILING_Y + BALL_R; my_bvel.y = absf(my_bvel.y) * BOUNCE_DAMP
 
-	# ── Header: a descending ball that lands on the head juggles up too ───────
-	if my_bvel.y > 0.0:
-		var head_x := my_x + (HEAD_CX_FRAC - 0.5) * FIG_HEIGHT
-		var head_y := GROUND_Y + FIG_FOOT_PAD - FIG_HEIGHT + HEAD_CY_FRAC * FIG_HEIGHT
-		if Vector2(my_ball.x - head_x, my_ball.y - head_y).length() < HEAD_HIT_R + BALL_R:
-			my_ball.y = head_y - (HEAD_HIT_R + BALL_R)   # sit the ball on top of the head
-			my_kick_count += 1
-			_ball_sfx.play()
-			if embedded and not networked and my_kick_count >= EMBED_WIN_KICKS:
-				winner = "you"
-			var dir_x := (my_ball.x - head_x) * 1.6
-			var rnd_x := randf_range(-KICK_RAND_X * 0.5, KICK_RAND_X * 0.5)
-			my_bvel = Vector2(dir_x + rnd_x, KICK_VEL_Y * 0.9) * my_speed
-
 	if my_ball.y + BALL_R >= GROUND_Y:
 		my_alive = false
 		if networked:

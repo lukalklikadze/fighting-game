@@ -13,7 +13,7 @@ const CHAR_TEXTURES := {
 const BALL_ORDER := ["georgian", "scottish", "english", "random"]
 const SELECTED_SCALE := 1.18
 const DIMMED := Color(0.65, 0.65, 0.65, 1.0)
-const MENU_SELECTED := Color(0.45, 0.45, 0.45, 1.0)
+const MENU_GLOW := Color(1.8, 1.6, 0.8, 1.0)   # over-bright warm glow for the selected word
 const TAKEN := Color(0.22, 0.22, 0.22, 0.5)   # opponent's fighter — greyed out, off-limits
 
 const MENU_FONT: FontFile = preload("res://assets/fonts/NotoSansGeorgian-Black.ttf")
@@ -64,8 +64,25 @@ func _ready() -> void:
 	_show_choices()
 
 
+var _glow_t := 0.0
+
+
 func _process(delta: float) -> void:
 	_process_join_timeout(delta)
+	_update_menu_glow(delta)
+
+
+# Pulsing glow on the currently-selected START / JOIN word.
+func _update_menu_glow(delta: float) -> void:
+	if _start_sprite == null or _join_sprite == null:
+		return
+	if _menu != Menu.CHOICES:
+		return
+	_glow_t += delta
+	var pulse := 0.5 + 0.5 * sin(_glow_t * 5.0)
+	var glow := Color.WHITE.lerp(MENU_GLOW, pulse)
+	_start_sprite.modulate = glow if _menu_index == 0 else Color.WHITE
+	_join_sprite.modulate = glow if _menu_index == 1 else Color.WHITE
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -106,11 +123,28 @@ func _select_input(event: InputEvent) -> void:
 	if _key_right(event):
 		_selected = _next_free(_selected, 1)
 		_update_highlight()
+		_send_hover()
 	elif _key_left(event):
 		_selected = _next_free(_selected, -1)
 		_update_highlight()
+		_send_hover()
 	elif event.is_action_pressed("ui_accept"):
 		_choose(_selected)
+
+
+# Live-preview the fighter we're hovering on the opponent's screen, before lock-in.
+func _send_hover() -> void:
+	if _hosting_active or _connected_as_client:
+		_rpc_set_opponent_hover.rpc(_selected)
+
+
+@rpc("any_peer", "call_remote", "unreliable_ordered")
+func _rpc_set_opponent_hover(index: int) -> void:
+	if _opp_chosen >= 0:
+		return  # opponent has already locked in — keep their final choice
+	index = clampi(index, 0, BALL_ORDER.size() - 1)
+	_opponent_display.texture = CHAR_TEXTURES[BALL_ORDER[index]]
+	_opponent_display.visible = true
 
 
 # A concrete fighter the opponent already chose is off-limits (random is fine).
@@ -175,6 +209,8 @@ func _enter_test_mode() -> void:
 func _set_selection_enabled(enabled: bool) -> void:
 	_selection_enabled = enabled
 	_update_highlight()
+	if enabled:
+		_send_hover()   # let the opponent see our starting pick right away
 
 
 func _update_highlight() -> void:
@@ -333,9 +369,9 @@ func _apply_menu_visibility() -> void:
 func _update_menu_highlight() -> void:
 	if _start_sprite == null or _join_sprite == null:
 		return
-	var in_choices := _menu == Menu.CHOICES
-	_start_sprite.modulate = MENU_SELECTED if (in_choices and _menu_index == 0) else Color.WHITE
-	_join_sprite.modulate = MENU_SELECTED if (in_choices and _menu_index == 1) else Color.WHITE
+	# Baseline white; the pulsing glow on the selected word is driven in _process.
+	_start_sprite.modulate = Color.WHITE
+	_join_sprite.modulate = Color.WHITE
 
 
 func _field_style(focused: bool) -> StyleBoxFlat:
