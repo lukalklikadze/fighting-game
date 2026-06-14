@@ -24,6 +24,7 @@ const SUPER_FADE := 0.35
 # light up per state. Local perspective: the LEFT button is always YOU, the
 # right is the opponent. Pause with ESC, ready with ENTER.
 const PAUSE_DURATION := 20.0
+const PAUSE_PER_PLAYER := 2           # how many times each player may pause per match
 const PAUSE_KEY := KEY_ESCAPE
 const PAUSE_READY_KEY := KEY_ENTER
 const PAUSE_MENU_HEIGHT := 580.0     # on-screen height of the centred card (kept off the edges)
@@ -119,11 +120,12 @@ var _pauser_pid := 0
 var _pause_time_left := 0.0
 var _pause_down := false
 var _pause_ready_down := false
-var _pause_used := {1: false, 2: false}
+var _pause_count := {1: 0, 2: 0}      # pauses each player has used this match
 var _pause_ready := {1: false, 2: false}
 var _pause_root: Control
 var _pause_image: TextureRect
 var _pause_timer_label: Label
+var _quit_button: TextureButton
 var _minigame: Node = null
 var _mg_layer: CanvasLayer
 var _fade_rect: ColorRect
@@ -184,6 +186,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	_process_lan_discovery(delta)
 	_process_join_timeout(delta)
+	_update_quit_visibility()
 	if _fight_mode and not _fight_started:
 		_process_fight_handshake(delta)
 		return
@@ -267,8 +270,6 @@ func _build_lives_super_hud(layer: CanvasLayer) -> void:
 		pip.custom_minimum_size = Vector2(22, 12)
 		p1_box.add_child(pip)
 		_p1_pips.append(pip)
-	_p1_super_bar = _make_super_bar()
-	p1_box.add_child(_p1_super_bar)
 
 	var spacer := Control.new()
 	spacer.custom_minimum_size = Vector2(46, 0)
@@ -276,59 +277,84 @@ func _build_lives_super_hud(layer: CanvasLayer) -> void:
 
 	var p2_box := HBoxContainer.new()
 	p2_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	p2_box.alignment = BoxContainer.ALIGNMENT_END
 	p2_box.add_theme_constant_override("separation", 6)
 	row.add_child(p2_box)
-	_p2_super_bar = _make_super_bar()
-	_p2_super_bar.fill_mode = ProgressBar.FILL_END_TO_BEGIN
-	p2_box.add_child(_p2_super_bar)
 	for i in range(TOTAL_BARS):
 		var pip := ColorRect.new()
 		pip.custom_minimum_size = Vector2(22, 12)
 		p2_box.add_child(pip)
 		_p2_pips.append(pip)
 
+	# Slim vertical super meters at each player's screen edge (P1 left, P2 right),
+	# filling bottom-to-top. Clean and compact instead of the wide horizontal bars.
+	_p1_super_bar = _make_super_bar()
+	_anchor_super_meter(_p1_super_bar, true)
+	layer.add_child(_p1_super_bar)
+	_p2_super_bar = _make_super_bar()
+	_anchor_super_meter(_p2_super_bar, false)
+	layer.add_child(_p2_super_bar)
+
 
 func _make_super_bar() -> ProgressBar:
 	var bar := ProgressBar.new()
-	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bar.custom_minimum_size = Vector2(180, 12)
+	bar.custom_minimum_size = Vector2(26, 150)
 	bar.min_value = 0.0
 	bar.max_value = 100.0
 	bar.value = 0.0
 	bar.show_percentage = false
-	bar.add_theme_stylebox_override("background", _panel_style(Color(0.03, 0.03, 0.02, 1.0), Color.BLACK, 1, 3))
+	# Vertical fill, growing upward as the meter charges.
+	bar.fill_mode = ProgressBar.FILL_BOTTOM_TO_TOP
+	bar.add_theme_stylebox_override("background", _panel_style(Color(0.06, 0.06, 0.05, 0.92), Color(0.86, 0.70, 0.26, 1.0), 2, 7))
 	var fill := StyleBoxFlat.new()
 	fill.bg_color = Color(1.0, 0.82, 0.26, 1.0)
-	fill.set_corner_radius_all(3)
+	fill.set_corner_radius_all(5)
 	bar.add_theme_stylebox_override("fill", fill)
 	return bar
 
 
+func _anchor_super_meter(bar: ProgressBar, on_left: bool) -> void:
+	var bar_w := 26.0
+	var bar_h := 150.0
+	# Vertically centred on the screen edge (well below the top health HUD).
+	bar.anchor_top = 0.5
+	bar.anchor_bottom = 0.5
+	bar.offset_top = -bar_h * 0.5
+	bar.offset_bottom = bar_h * 0.5
+	if on_left:
+		bar.anchor_left = 0.0
+		bar.anchor_right = 0.0
+		bar.offset_left = 16.0
+		bar.offset_right = 16.0 + bar_w
+	else:
+		bar.anchor_left = 1.0
+		bar.anchor_right = 1.0
+		bar.offset_left = -16.0 - bar_w
+		bar.offset_right = -16.0
+
+
 func _build_quit_button() -> void:
-	# Lives on its own top-most layer so it is clickable on every screen
-	# (title, character select and during a match) for both players.
+	# Top-most layer. Hidden during the live fight (it overlapped the lives) and
+	# only shown while paused / on the menus — see _update_quit_visibility().
+	# Bottom-right so it never covers the top health/lives HUD.
 	var quit_layer := CanvasLayer.new()
 	quit_layer.layer = 100
 	add_child(quit_layer)
 
-	var quit := Button.new()
-	quit.text = "QUIT"
+	# Hand-drawn QUIT image, matching the pause menu art.
+	var quit := TextureButton.new()
+	_quit_button = quit
+	quit.texture_normal = preload("res://assets/pause menu/quit.png")
+	quit.ignore_texture_size = true
+	quit.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
 	quit.focus_mode = Control.FOCUS_NONE
-	quit.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	quit.offset_left = -134.0
-	quit.offset_top = 18.0
+	var quit_w := 180.0
+	var quit_h := quit_w * 481.0 / 1000.0     # keep the image's aspect ratio
+	quit.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	quit.offset_left = -quit_w - 18.0
+	quit.offset_top = -quit_h - 18.0
 	quit.offset_right = -18.0
-	quit.offset_bottom = 66.0
-	quit.add_theme_font_override("font", MENU_FONT)
-	quit.add_theme_font_size_override("font_size", 20)
-	quit.add_theme_color_override("font_color", Color(1.0, 0.92, 0.90, 1.0))
-	quit.add_theme_color_override("font_hover_color", Color.WHITE)
-	quit.add_theme_color_override("font_pressed_color", Color.WHITE)
-	quit.add_theme_color_override("font_outline_color", Color.BLACK)
-	quit.add_theme_constant_override("outline_size", 4)
-	quit.add_theme_stylebox_override("normal", _panel_style(Color(0.42, 0.10, 0.09, 0.92), Color(0.90, 0.32, 0.26, 1.0), 2, 8))
-	quit.add_theme_stylebox_override("hover", _panel_style(Color(0.78, 0.18, 0.15, 1.0), Color(1.0, 0.90, 0.45, 1.0), 3, 8))
-	quit.add_theme_stylebox_override("pressed", _panel_style(Color(0.86, 0.20, 0.16, 1.0), Color(1.0, 0.90, 0.45, 1.0), 3, 8))
+	quit.offset_bottom = -18.0
 	quit.pressed.connect(_on_quit_pressed)
 	quit_layer.add_child(quit)
 
@@ -336,6 +362,13 @@ func _build_quit_button() -> void:
 func _on_quit_pressed() -> void:
 	_close_multiplayer_peer()
 	get_tree().quit()
+
+
+func _update_quit_visibility() -> void:
+	# Hide QUIT during a live fight (it covered the lives); show it on the menus
+	# and while the game is paused.
+	if _quit_button != null:
+		_quit_button.visible = _screen != ScreenState.MATCH or _pause_active
 
 
 func _build_victory_banner(layer: CanvasLayer) -> void:
@@ -1110,7 +1143,7 @@ func _start_match(client_peer_id: int, p1_character: int, p2_character: int) -> 
 	_match_end_sent = false
 	# Start the lives + super-meter loop.
 	_bar = {1: 1, 2: 1}
-	_pause_used = {1: false, 2: false}
+	_pause_count = {1: 0, 2: 0}
 	_clear_pause_state()
 	_msub = MatchSub.FIGHT
 	player_one.set("super_fill_enabled", true)
@@ -1445,9 +1478,9 @@ func _rpc_request_pause(pid: int) -> void:
 func _host_begin_pause(pid: int) -> void:
 	if _screen != ScreenState.MATCH or _msub != MatchSub.FIGHT or _pause_active:
 		return
-	if bool(_pause_used.get(pid, true)):
-		return   # this player already spent their one pause
-	_pause_used[pid] = true
+	if int(_pause_count.get(pid, PAUSE_PER_PLAYER)) >= PAUSE_PER_PLAYER:
+		return   # this player has used up their pauses
+	_pause_count[pid] = int(_pause_count[pid]) + 1
 	if multiplayer.has_multiplayer_peer():
 		_rpc_begin_pause.rpc(pid)
 	_begin_pause(pid)
@@ -1455,7 +1488,7 @@ func _host_begin_pause(pid: int) -> void:
 
 @rpc("authority", "call_remote", "reliable")
 func _rpc_begin_pause(pid: int) -> void:
-	_pause_used[pid] = true
+	_pause_count[pid] = int(_pause_count[pid]) + 1
 	_begin_pause(pid)
 
 
