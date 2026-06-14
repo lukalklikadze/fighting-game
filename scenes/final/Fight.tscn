@@ -28,6 +28,7 @@ z_index = -5
 script = ExtResource("3_bg")
 
 [node name="ArenaVisuals" type="Node2D" parent="." unique_id=1701662405]
+visible = false
 
 [node name="GroundVisual" type="Polygon2D" parent="ArenaVisuals" unique_id=1880785985]
 color = Color(0, 0, 0, 1)

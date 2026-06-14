@@ -864,7 +864,9 @@ func _show_match_screen() -> void:
 
 
 func _set_match_enabled(enabled: bool) -> void:
-	arena_visuals.visible = enabled
+	# Arena boundary lines were white-void reference marks; the real background
+	# replaces them, so keep them hidden.
+	arena_visuals.visible = false
 	world_collision.visible = enabled
 	players_root.visible = enabled
 	player_one.set_physics_process(enabled)
