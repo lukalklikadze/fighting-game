@@ -61,7 +61,10 @@ func _ready() -> void:
 	_build_ui()
 	_connect_multiplayer_signals()
 	_update_highlight()
-	_show_choices()
+	# Game loop: if we arrived here with a live session still connected (returning
+	# from a finished match), skip host/join and go straight to fighter select.
+	if not _resume_existing_session():
+		_show_choices()
 
 
 var _glow_t := 0.0
@@ -354,6 +357,37 @@ func _show_choices() -> void:
 	_apply_menu_visibility()
 	_update_menu_highlight()
 	_set_status("")
+
+
+# When this scene loads with a multiplayer session already connected (the game
+# loop returning from a finished match), the peer_connected / connected_to_server
+# signals have already fired in the previous scene and won't fire again. Detect
+# the live connection here and re-enter fighter select directly.
+func _resume_existing_session() -> bool:
+	var peer := multiplayer.multiplayer_peer
+	if not (peer is ENetMultiplayerPeer):
+		return false
+	if peer.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
+		return false
+	if multiplayer.is_server():
+		var peers := multiplayer.get_peers()
+		if peers.is_empty():
+			return false   # the other player dropped — fall back to the menu
+		_hosting_active = true
+		_connected_as_client = false
+		_client_peer_id = peers[0]
+	else:
+		_connected_as_client = true
+		_hosting_active = false
+		_client_peer_id = multiplayer.get_unique_id()
+	_menu = Menu.SELECT
+	_apply_menu_visibility()
+	if _code_label != null:
+		_code_label.text = ""
+	_set_status("")
+	_refresh_lobby_controls()
+	_set_selection_enabled(true)
+	return true
 
 
 func _apply_menu_visibility() -> void:

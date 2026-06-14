@@ -331,6 +331,20 @@ func _update(delta: float) -> void:
 			my_bvel   = Vector2(dir_x + rnd_x, KICK_VEL_Y) * my_speed
 			my_rand_bounce = true   # next bounce sends it a random direction
 
+	# ── Header detection (auto-bounce off the head, then a random direction) ──
+	if my_bvel.y >= 0.0:   # only while the ball is falling onto the head
+		var head_cx := my_x + FIG_HEIGHT * (HEAD_CX_FRAC - 0.5)
+		var head_cy := (GROUND_Y + FIG_FOOT_PAD - FIG_HEIGHT) + FIG_HEIGHT * HEAD_CY_FRAC
+		if my_ball.distance_to(Vector2(head_cx, head_cy)) < HEAD_HIT_R + BALL_R:
+			my_kick_count += 1
+			_ball_sfx.play()
+			if embedded and not networked and my_kick_count >= EMBED_WIN_KICKS:
+				winner = "you"
+			# Header pops the ball up and sends it off in a random direction.
+			my_bvel   = Vector2(randf_range(-KICK_RAND_X, KICK_RAND_X), KICK_VEL_Y) * my_speed
+			my_ball.y = head_cy - (HEAD_HIT_R + BALL_R)   # lift clear of the head
+			my_rand_bounce = true
+
 	# ── Ball physics ─────────────────────────────────────────────────────────
 	my_bvel.y += GRAVITY * delta
 	my_ball   += my_bvel * delta

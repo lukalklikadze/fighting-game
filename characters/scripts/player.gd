@@ -513,15 +513,16 @@ func _update_movement_sfx() -> void:
 			_walk_sfx.stop()
 	if anim != _prev_sfx_anim:
 		if anim == "jump_start":
-			_play_move_oneshot(MOVE_JUMP_SFX)
+			_play_move_oneshot(MOVE_JUMP_SFX, -10.0)
 		elif anim == "dash":
 			_play_move_oneshot(MOVE_DASH_SFX)
 	_prev_sfx_anim = anim
 
 
-func _play_move_oneshot(clips: Array) -> void:
+func _play_move_oneshot(clips: Array, volume_db: float = 0.0) -> void:
 	if _move_oneshot_sfx == null or clips.is_empty():
 		return
+	_move_oneshot_sfx.volume_db = volume_db
 	_move_oneshot_sfx.stream = clips[_bot_rng.randi_range(0, clips.size() - 1)]
 	_move_oneshot_sfx.play()
 

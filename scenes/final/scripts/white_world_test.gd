@@ -139,7 +139,6 @@ var _join_button: Button
 var _code_edit: LineEdit
 var _host_code_label: Label
 var _status_label: Label
-var _victory_label: Label
 var _win_overlay: TextureRect
 var _win_sfx: AudioStreamPlayer
 var _music: AudioStreamPlayer
@@ -411,7 +410,7 @@ func _update_quit_visibility() -> void:
 
 
 func _build_victory_banner(layer: CanvasLayer) -> void:
-	# Full-screen winner image, sits behind the "PLAYER X WINS" text.
+	# Full-screen winner image.
 	_win_overlay = TextureRect.new()
 	_win_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_win_overlay.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -421,22 +420,6 @@ func _build_victory_banner(layer: CanvasLayer) -> void:
 	layer.add_child(_win_overlay)
 	_win_sfx = AudioStreamPlayer.new()
 	add_child(_win_sfx)
-
-	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	layer.add_child(center)
-
-	_victory_label = Label.new()
-	_victory_label.add_theme_font_override("font", MENU_FONT)
-	_victory_label.add_theme_font_size_override("font_size", 88)
-	_victory_label.add_theme_color_override("font_color", Color.WHITE)
-	_victory_label.add_theme_color_override("font_outline_color", Color.BLACK)
-	_victory_label.add_theme_constant_override("outline_size", 14)
-	_victory_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_victory_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_victory_label.visible = false
-	center.add_child(_victory_label)
 
 
 func _build_pause_menu(layer: CanvasLayer) -> void:
@@ -894,8 +877,6 @@ func _show_match_screen() -> void:
 	_title_root.visible = false
 	_select_root.visible = false
 	_fight_layer.visible = true
-	if _victory_label != null:
-		_victory_label.visible = false
 	if _win_overlay != null:
 		_win_overlay.visible = false
 	_set_match_enabled(true)
@@ -1243,6 +1224,7 @@ func _setup_music() -> void:
 	add_child(_win_voice)
 	_death_sfx = AudioStreamPlayer.new()
 	_death_sfx.stream = preload("res://sounds/death.mp3")
+	_death_sfx.volume_db = -12.0
 	add_child(_death_sfx)
 
 
@@ -1365,11 +1347,15 @@ func _apply_character_to_player(player: Node2D, character_index: int) -> void:
 	player.call("set_character", str(CHARACTERS[character_index].get("key", "placeholder")))
 
 
-func _return_to_selection_after_match(_message: String) -> void:
-	# After a match, go back to the starter screen (a fresh start), per design.
+func _return_to_selection_after_match(_message := "") -> void:
+	# Game loop: keep the live multiplayer session and send both players back to
+	# the character-select screen (Select.tscn) so they can re-pick and play
+	# again. The ENet peer carries over the scene change; Select detects the
+	# existing connection and drops straight into fighter select.
 	_stop_fight_music()
 	_clear_minigame()
-	get_tree().change_scene_to_file("res://scenes/final/Title.tscn")
+	MatchSetup.clear()
+	get_tree().change_scene_to_file("res://scenes/final/Select.tscn")
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -1393,9 +1379,11 @@ func _process_match_end() -> void:
 # Host-authoritative: a fighter lost its current bar — death anim, then either
 # resurrect onto the next bar (both reset to start) or end the match.
 func _run_ko(loser: int) -> void:
+	# The last death (no bars left) ends the match — that one plays no death sting.
+	var final_death := int(_bar[loser]) >= TOTAL_BARS
 	if multiplayer.has_multiplayer_peer():
-		_rpc_begin_ko.rpc(loser)
-	_begin_ko(loser)
+		_rpc_begin_ko.rpc(loser, final_death)
+	_begin_ko(loser, final_death)
 	await get_tree().create_timer(KO_FREEZE_TIME).timeout
 	if _screen != ScreenState.MATCH or _msub != MatchSub.KO:
 		return
@@ -1412,16 +1400,24 @@ func _run_ko(loser: int) -> void:
 
 
 @rpc("authority", "call_remote", "reliable")
-func _rpc_begin_ko(loser: int) -> void:
-	_begin_ko(loser)
+func _rpc_begin_ko(loser: int, final_death: bool = false) -> void:
+	_begin_ko(loser, final_death)
 
 
-func _begin_ko(_loser: int) -> void:
+func _begin_ko(_loser: int, final_death: bool = false) -> void:
 	_msub = MatchSub.KO
 	_set_match_frozen(true)
-	# Death sting on EVERY death (each lost life), not just the final one.
-	if _death_sfx != null:
-		_death_sfx.play()
+	# Death sting on every non-final death; the final victory is silent.
+	if not final_death and _death_sfx != null:
+		_play_death_sfx()
+
+
+# Play the death sting, clipped to 2 seconds.
+func _play_death_sfx() -> void:
+	_death_sfx.play()
+	await get_tree().create_timer(2.0).timeout
+	if _death_sfx != null and _death_sfx.playing:
+		_death_sfx.stop()
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -1840,13 +1836,11 @@ func _play_victory(winner: int) -> void:
 	player_two.set("accept_local_input", false)
 	_show_victory_banner(winner)
 	# The loser flies up off the top of the screen (camera doesn't chase it).
-	# The death sting already played at the KO.
+	# The final KO is silent — no death sting on the match-ending death.
 	# Only the host counts down, then sends everyone back to the starter.
 	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
 		return
 	var wait := VICTORY_DISPLAY_TIME
-	if _death_sfx != null and _death_sfx.stream != null:
-		wait = maxf(wait, _death_sfx.stream.get_length())
 	var win_snd: AudioStream = WIN_SCREEN_SFX.get(_winner_character(winner), null)
 	if win_snd != null:
 		wait = maxf(wait, win_snd.get_length())
@@ -1870,11 +1864,6 @@ func _show_victory_banner(winner: int) -> void:
 		if snd != null:
 			_win_sfx.stream = snd
 			_win_sfx.play()
-	if _victory_label == null:
-		return
-	_victory_label.text = "PLAYER %d WINS!" % winner
-	_victory_label.add_theme_color_override("font_color", P1_COLOR if winner == 1 else P2_COLOR)
-	_victory_label.visible = true
 
 
 func _winner_character(winner: int) -> String:
