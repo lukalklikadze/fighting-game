@@ -381,7 +381,8 @@ func _resolve_solo() -> void:
 # better). Any spill ranks below every clean pour. Equal rank → draw, so two
 # pours that show the same percentage always tie.
 func _rank(f: float) -> int:
-	if f > 1.0 + FOAM_ZONE:
+	# Over 100% (decimal) is a spill and loses to any clean pour.
+	if f > 1.0:
 		return -1                          # spilled — loses to any clean pour
 	return roundi(minf(f, 1.0) * 100.0)    # the shown percentage
 
@@ -437,7 +438,8 @@ func _render_opponent() -> void:
 
 
 func _fill_text(f: float) -> String:
-	if f > 1.0 + FOAM_ZONE:
+	# Over 100% (checked in decimals, not the rounded percentage) = spilled.
+	if f > 1.0:
 		return "დაგეწუწა, დებილო!"
 	return "%d%%" % roundi(minf(f, 1.0) * 100.0)
 

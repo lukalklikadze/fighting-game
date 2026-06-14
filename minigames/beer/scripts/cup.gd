@@ -37,7 +37,7 @@ func _draw() -> void:
 	var side: float = minf(s.x, s.y)
 	var rx := (s.x - side) * 0.5
 	var ry := (s.y - side) * 0.5
-	var spilled := fill > 1.0 + FOAM_ZONE
+	var spilled := fill > 1.0   # over 100% (decimal) → swap to the overflowing mug
 
 	# Interior rect (screen space) where the beer sits.
 	var ix     := rx + side * INT_L
