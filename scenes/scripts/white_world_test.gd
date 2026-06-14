@@ -112,6 +112,7 @@ var _victory_label: Label
 var _msub := MatchSub.FIGHT
 var _bar := {1: 1, 2: 1}
 var _super_connected := false
+var _last_minigame := 0               # host-tracked: never run the same minigame twice in a row
 
 # Pause state (host-authoritative, mirrored on both peers).
 var _pause_active := false
@@ -1146,6 +1147,7 @@ func _start_match(client_peer_id: int, p1_character: int, p2_character: int) -> 
 	# Start the lives + super-meter loop.
 	_bar = {1: 1, 2: 1}
 	_pause_count = {1: 0, 2: 0}
+	_last_minigame = 0
 	_clear_pause_state()
 	_msub = MatchSub.FIGHT
 	player_one.set("super_fill_enabled", true)
@@ -1384,10 +1386,22 @@ func _host_begin_super(attacker: int) -> void:
 	# random minigame and broadcasts it so both peers run the same one.
 	if _screen != ScreenState.MATCH or _msub != MatchSub.FIGHT:
 		return
-	var which := _rng.randi_range(1, TOTAL_SUPERS)
+	var which := _pick_minigame()
 	if multiplayer.has_multiplayer_peer():
 		_rpc_begin_super.rpc(which, attacker)
 	_run_super(which, attacker)
+
+
+func _pick_minigame() -> int:
+	# Random, but never the same minigame type twice in a row.
+	var pool: Array[int] = []
+	for i in range(1, TOTAL_SUPERS + 1):
+		if i != _last_minigame:
+			pool.append(i)
+	if pool.is_empty():
+		pool.append(_rng.randi_range(1, TOTAL_SUPERS))
+	_last_minigame = pool[_rng.randi_range(0, pool.size() - 1)]
+	return _last_minigame
 
 
 @rpc("authority", "call_remote", "reliable")
