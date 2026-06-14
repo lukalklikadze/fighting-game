@@ -16,7 +16,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 config/name="2D Fighting Game"
 config/tags=PackedStringArray("multiplayer", "fighting", "2d")
-run/main_scene="res://title.tscn"
+run/main_scene="res://scenes/final/Title.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 
 [autoload]
@@ -43,3 +43,7 @@ bind_mode=0
 custom_bind_ip=""
 port_override_enabled=false
 port_override=6550
+
+[rendering]
+
+textures/vram_compression/import_etc2_astc=true

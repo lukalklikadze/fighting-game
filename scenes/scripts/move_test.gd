@@ -5,8 +5,8 @@ extends Node2D
 ## move and animation. Switch your character on the fly to test all three.
 ##
 ##   A / D  move        W  jump          J  hand kick (light)
-##   K  leg kick        L  hard hit       L L L  super
-##   I  block
+##   K  leg kick        L  hard hit       O O  super (special)
+##   I  block      (Mortal-Kombat feel: one committed move at a time, no combos)
 ##   1 / 2 / 3  English / Georgian / Scotsman      Q  cycle character
 ##   R  reset positions                            Esc  quit
 
@@ -75,12 +75,15 @@ func _on_died(_pid: int) -> void:
 	if _resetting:
 		return
 	_resetting = true
-	await get_tree().create_timer(0.8).timeout
+	# Hold the death pose for a beat, then pop both back to their start positions.
+	await get_tree().create_timer(1.5).timeout
 	_reset()
 
 
 func _process(delta: float) -> void:
 	_update_camera()
+	# Test bench: keep the special always ready (no cooldown) so you can spam it.
+	p1.reset_special_cooldown()
 	if Input.is_action_just_pressed("ui_cancel"):
 		get_tree().quit()
 
@@ -128,13 +131,13 @@ func _build_hud() -> void:
 	var controls := _make_label(20, Color(0.12, 0.12, 0.12, 1.0))
 	controls.position = Vector2(40, 70)
 	controls.size = Vector2(1400, 30)
-	controls.text = "A/D move    W jump    J hand kick    K leg kick    L hard hit    L L L super    I block    R reset    Esc quit"
+	controls.text = "A/D move    W jump    J hand kick    K leg kick    L hard hit    O O super    I block    R reset    Esc quit"
 	layer.add_child(controls)
 
 	var combos := _make_label(20, Color(0.55, 0.12, 0.10, 1.0))
 	combos.position = Vector2(40, 100)
 	combos.size = Vector2(1400, 30)
-	combos.text = "Combos (link as hits land):   J - K - L    |    J - L    |    K - L"
+	combos.text = "Mortal-Kombat style: one move at a time (no combos). Brief invulnerability after each hit. ~10fps snappy poses."
 	layer.add_child(combos)
 
 

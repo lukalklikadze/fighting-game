@@ -1,16 +1,20 @@
 extends Node2D
 class_name BeerSplashEffect
 
-## The aftermath of the English fighter's thrown beer can: a spreading puddle of
-## beer plus a burst of broken-glass shards on the floor. It grows in fast, sits
-## for a moment, then fades out smoothly and removes itself. Cosmetic only — the
-## hit is dealt by BeerSplash at spawn time.
+## The aftermath of the English fighter's thrown beer can: the hand-drawn beer
+## puddle on the floor plus a quick burst of glass/beer specks. It grows in fast,
+## sits for a moment, then fades out smoothly and removes itself. Cosmetic only —
+## the hit is dealt by BeerSplash (this just lingers as the visible hazard).
 
 const LIFETIME := 6.5
 const FADE_TIME := 2.2               # smooth fade over the final stretch
 const GROW_TIME := 0.28
-const PUDDLE_RX := 80.0
-const PUDDLE_RY := 17.0
+
+# Hand-drawn puddle art (1000x1000 canvas). Scaled down to a floor-sized splat,
+# and nudged so the drawn puddle's centre sits on the landing point.
+const BEER_FLOOR_TEX := "res://assets/beer on floor.png"
+const BEER_SCALE := 0.5
+const BEER_OFFSET := Vector2(65.0, -10.0)
 
 # Hazard: anyone standing in the spill keeps taking damage on this interval.
 const HIT_INTERVAL := 0.7            # seconds between damage ticks
@@ -23,6 +27,7 @@ var _land := Vector2.ZERO
 var _radius := 135.0
 var _payload := ""
 var _hit_cd := 0.0
+var _sprite: Sprite2D = null
 
 
 func setup(user, authoritative: bool, land: Vector2, radius: float, payload: String) -> void:
@@ -34,7 +39,16 @@ func setup(user, authoritative: bool, land: Vector2, radius: float, payload: Str
 	global_position = land
 	add_to_group("special_effects")
 	z_index = -1                      # sits on the floor, behind the fighters
+	_build_puddle()
 	_spawn_shards()
+
+
+func _build_puddle() -> void:
+	_sprite = Sprite2D.new()
+	_sprite.texture = load(BEER_FLOOR_TEX)
+	_sprite.position = BEER_OFFSET
+	_sprite.scale = Vector2.ZERO       # grows in over GROW_TIME
+	add_child(_sprite)
 
 
 func _physics_process(delta: float) -> void:
@@ -58,8 +72,7 @@ func _physics_process(delta: float) -> void:
 
 
 func _spawn_shards() -> void:
-	# One-shot burst of glass/beer specks. Swap for a sprite-based particle
-	# texture later; the lifecycle here is independent of the look.
+	# One-shot burst of glass/beer specks for the splash moment.
 	var shards := CPUParticles2D.new()
 	shards.emitting = true
 	shards.one_shot = true
@@ -79,49 +92,13 @@ func _spawn_shards() -> void:
 
 func _process(delta: float) -> void:
 	_age += delta
-	queue_redraw()
+	if _sprite != null:
+		var grow := clampf(_age / GROW_TIME, 0.0, 1.0)
+		_sprite.scale = Vector2(BEER_SCALE, BEER_SCALE) * grow
+		var fade := 1.0
+		var remaining := LIFETIME - _age
+		if remaining < FADE_TIME:
+			fade = clampf(remaining / FADE_TIME, 0.0, 1.0)
+		_sprite.modulate.a = fade
 	if _age >= LIFETIME:
 		queue_free()
-
-
-func _draw() -> void:
-	var fade := 1.0
-	var remaining := LIFETIME - _age
-	if remaining < FADE_TIME:
-		fade = clampf(remaining / FADE_TIME, 0.0, 1.0)
-	var grow := clampf(_age / GROW_TIME, 0.0, 1.0)
-	var rx := PUDDLE_RX * grow
-	var ry := PUDDLE_RY * grow
-
-	# Beer puddle — layered amber ellipses.
-	_draw_ellipse(Vector2.ZERO, rx, ry, Color(0.78, 0.58, 0.15, 0.55 * fade))
-	_draw_ellipse(Vector2.ZERO, rx * 0.62, ry * 0.7, Color(0.92, 0.75, 0.28, 0.5 * fade))
-
-	# Foam — a frothy cream cap with scattered bubbles, the signature of beer.
-	_draw_ellipse(Vector2(0.0, -ry * 0.18), rx * 0.66, ry * 0.62, Color(0.98, 0.95, 0.82, 0.55 * fade))
-	var foam := Color(0.99, 0.97, 0.88, 0.85 * fade)
-	for i in range(12):
-		var ang := float(i) / 12.0 * TAU + 0.5
-		var ring := rx * (0.32 + 0.46 * float((i * 7) % 5) / 5.0)
-		var bubble := Vector2(cos(ang) * ring, sin(ang) * ry * 0.66 - ry * 0.1)
-		var br := 2.5 + float((i * 3) % 4)
-		draw_circle(bubble, br, foam)
-		draw_circle(bubble + Vector2(-br * 0.3, -br * 0.3), br * 0.4, Color(1.0, 1.0, 0.96, 0.7 * fade))
-
-	# Broken-glass shards resting in the puddle.
-	var glass := Color(0.86, 0.90, 0.82, 0.85 * fade)
-	for i in range(6):
-		var a := float(i) / 6.0 * TAU + 0.4
-		var c := Vector2(cos(a), sin(a) * 0.4) * rx * 0.72
-		var s := 5.0 + float(i % 3) * 2.0
-		var tri := PackedVector2Array([c + Vector2(-s, s * 0.5), c + Vector2(s, 0.0), c + Vector2(0.0, -s)])
-		draw_colored_polygon(tri, glass)
-
-
-func _draw_ellipse(center: Vector2, rx: float, ry: float, col: Color) -> void:
-	var pts := PackedVector2Array()
-	var n := 22
-	for i in range(n):
-		var a := float(i) / float(n) * TAU
-		pts.append(center + Vector2(cos(a) * rx, sin(a) * ry))
-	draw_colored_polygon(pts, col)

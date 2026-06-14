@@ -1,0 +1,59 @@
+[gd_scene format=3 uid="uid://cjxwhuru5hne6"]
+
+[ext_resource type="Texture2D" uid="uid://7an0gqiex7r8" path="res://assets/start sprites/background_start_2.png" id="1_f3tf5"]
+[ext_resource type="Texture2D" uid="uid://d2oh8htih5ap8" path="res://assets/start sprites/georgian_ball.png" id="2_wusxs"]
+[ext_resource type="Texture2D" uid="uid://ban053bbnvhh0" path="res://assets/start sprites/scotish_ball.png" id="3_nlika"]
+[ext_resource type="Texture2D" uid="uid://bpii6hb51ajvc" path="res://assets/start sprites/english_ball.png" id="4_nlika"]
+[ext_resource type="Texture2D" uid="uid://bylimy88v3qcn" path="res://assets/start sprites/random_ball.png" id="5_bewve"]
+[ext_resource type="Script" path="res://scenes/final/scripts/starter_2.gd" id="6_script"]
+[ext_resource type="Texture2D" uid="uid://dny5kieyart8x" path="res://assets/start sprites/Group 3.png" id="7_display"]
+[ext_resource type="Texture2D" uid="uid://bch4o80ag6kj8" path="res://assets/start.png" id="8_ye161"]
+[ext_resource type="Texture2D" uid="uid://c7ywpla5063d" path="res://assets/join.png" id="9_2kjkn"]
+
+[node name="Node2D" type="Node2D" unique_id=26301389]
+script = ExtResource("6_script")
+
+[node name="Sprite2D" type="Sprite2D" parent="." unique_id=1654403666]
+position = Vector2(641.00006, 361.75)
+scale = Vector2(0.6676003, 0.66898155)
+texture = ExtResource("1_f3tf5")
+
+[node name="georgian" type="Sprite2D" parent="." unique_id=1524286475]
+position = Vector2(265, 267)
+scale = Vector2(0.300375, 0.29174998)
+texture = ExtResource("2_wusxs")
+
+[node name="scottish" type="Sprite2D" parent="." unique_id=1485326796]
+position = Vector2(495, 269)
+scale = Vector2(0.289, 0.281)
+texture = ExtResource("3_nlika")
+
+[node name="english" type="Sprite2D" parent="." unique_id=1515307047]
+position = Vector2(745.00006, 268)
+scale = Vector2(0.29775, 0.28993753)
+texture = ExtResource("4_nlika")
+
+[node name="random" type="Sprite2D" parent="." unique_id=778713694]
+position = Vector2(1004, 268)
+scale = Vector2(0.29474998, 0.28149998)
+texture = ExtResource("5_bewve")
+
+[node name="CharacterDisplay" type="Sprite2D" parent="." unique_id=778713695]
+position = Vector2(302, 481.99997)
+scale = Vector2(0.4796335, 0.47487578)
+texture = ExtResource("7_display")
+
+[node name="OpponentDisplay" type="Sprite2D" parent="." unique_id=778713696]
+position = Vector2(978.00006, 480)
+scale = Vector2(0.4733834, 0.45555013)
+texture = ExtResource("7_display")
+
+[node name="start" type="Sprite2D" parent="." unique_id=707384504]
+position = Vector2(396.00003, 612)
+scale = Vector2(0.69014084, 0.69014084)
+texture = ExtResource("8_ye161")
+
+[node name="join" type="Sprite2D" parent="." unique_id=743644176]
+position = Vector2(837.102, 608.375)
+scale = Vector2(0.68026876, 0.6610583)
+texture = ExtResource("9_2kjkn")
